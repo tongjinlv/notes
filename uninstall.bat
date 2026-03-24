@@ -1,0 +1,1 @@
+notes.exe -service uninstall -svc-name LocalNotes

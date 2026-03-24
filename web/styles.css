@@ -99,9 +99,22 @@ body {
 
 .logo {
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   font-size: 1.25rem;
   font-weight: 700;
   letter-spacing: -0.02em;
+}
+
+.logo-icon {
+  flex-shrink: 0;
+  display: block;
+  border-radius: 6px;
+}
+
+.logo-text {
+  line-height: 1;
 }
 
 .sidebar-actions {

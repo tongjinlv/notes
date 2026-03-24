@@ -164,10 +164,77 @@ func safeNoteID(id string) bool {
 	return !strings.ContainsAny(id, `/\:`)
 }
 
-func (v *Vault) List() ([]Note, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
+// 侧栏顺序持久化（与笔记 md 同级仓库根下）；无此文件时 List 按 dir+id 排序
+const sidebarOrderFile = ".notes-sidebar-order.json"
 
+func sortNotesByDirID(notes []Note) {
+	sort.Slice(notes, func(i, j int) bool {
+		di, dj := notes[i].Dir, notes[j].Dir
+		if di != dj {
+			return di > dj
+		}
+		return notes[i].ID > notes[j].ID
+	})
+}
+
+func (v *Vault) sidebarOrderPath() string {
+	return filepath.Join(v.root, sidebarOrderFile)
+}
+
+func (v *Vault) loadSidebarOrderUnlocked() []string {
+	data, err := os.ReadFile(v.sidebarOrderPath())
+	if err != nil || len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+	var ids []string
+	if json.Unmarshal(data, &ids) != nil {
+		return nil
+	}
+	return ids
+}
+
+func (v *Vault) saveSidebarOrderUnlocked(ids []string) error {
+	data, err := json.MarshalIndent(ids, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(v.sidebarOrderPath(), data, 0o644)
+}
+
+func sidebarOrderWithoutID(ids []string, drop string) []string {
+	out := ids[:0]
+	for _, id := range ids {
+		if id != drop {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func (v *Vault) applySidebarOrderUnlocked(notes []Note, order []string) []Note {
+	byID := make(map[string]Note, len(notes))
+	for _, n := range notes {
+		byID[n.ID] = n
+	}
+	seen := make(map[string]bool, len(notes))
+	out := make([]Note, 0, len(notes))
+	for _, id := range order {
+		if n, ok := byID[id]; ok {
+			out = append(out, n)
+			seen[id] = true
+		}
+	}
+	var rest []Note
+	for _, n := range notes {
+		if !seen[n.ID] {
+			rest = append(rest, n)
+		}
+	}
+	sortNotesByDirID(rest)
+	return append(out, rest...)
+}
+
+func (v *Vault) listNotesRawUnlocked() ([]Note, error) {
 	var notes []Note
 	err := filepath.WalkDir(v.root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -205,21 +272,67 @@ func (v *Vault) List() ([]Note, error) {
 		notes = append(notes, note)
 		return nil
 	})
+	return notes, err
+}
+
+func (v *Vault) sidebarInsertUnlocked(newID, beforeID string) {
+	ids := v.loadSidebarOrderUnlocked()
+	ids = sidebarOrderWithoutID(ids, newID)
+	if len(ids) == 0 {
+		all, err := v.listNotesRawUnlocked()
+		if err == nil {
+			sortNotesByDirID(all)
+			for _, n := range all {
+				if n.ID != newID {
+					ids = append(ids, n.ID)
+				}
+			}
+		}
+	}
+	if beforeID != "" {
+		idx := -1
+		for i, x := range ids {
+			if x == beforeID {
+				idx = i
+				break
+			}
+		}
+		if idx >= 0 {
+			ids = append(ids[:idx], append([]string{newID}, ids[idx:]...)...)
+		} else {
+			ids = append([]string{newID}, ids...)
+		}
+	} else {
+		ids = append([]string{newID}, ids...)
+	}
+	_ = v.saveSidebarOrderUnlocked(ids)
+}
+
+func (v *Vault) sidebarRemoveUnlocked(id string) {
+	ids := v.loadSidebarOrderUnlocked()
+	if len(ids) == 0 {
+		return
+	}
+	_ = v.saveSidebarOrderUnlocked(sidebarOrderWithoutID(ids, id))
+}
+
+func (v *Vault) List() ([]Note, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	notes, err := v.listNotesRawUnlocked()
 	if err != nil {
 		return nil, err
 	}
-	// 按仓库路径排序，编辑只改 updatedAt 不改 dir，列表顺序稳定（避免切换笔记时条目乱跳）
-	sort.Slice(notes, func(i, j int) bool {
-		di, dj := notes[i].Dir, notes[j].Dir
-		if di != dj {
-			return di > dj
-		}
-		return notes[i].ID > notes[j].ID
-	})
-	return notes, nil
+	order := v.loadSidebarOrderUnlocked()
+	if len(order) == 0 {
+		sortNotesByDirID(notes)
+		return notes, nil
+	}
+	return v.applySidebarOrderUnlocked(notes, order), nil
 }
 
-func (v *Vault) Create(title, body string) (Note, error) {
+func (v *Vault) Create(title, body, beforeID string) (Note, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -244,6 +357,11 @@ func (v *Vault) Create(title, body string) (Note, error) {
 	if err := os.WriteFile(filepath.Join(full, "note.md"), raw, 0o644); err != nil {
 		return Note{}, err
 	}
+	before := beforeID
+	if before != "" && !safeNoteID(before) {
+		before = ""
+	}
+	v.sidebarInsertUnlocked(id, before)
 	return n, nil
 }
 
@@ -319,7 +437,11 @@ func (v *Vault) Delete(id string) error {
 	if err != nil {
 		return err
 	}
-	return os.RemoveAll(v.abs(dirRel))
+	if err := os.RemoveAll(v.abs(dirRel)); err != nil {
+		return err
+	}
+	v.sidebarRemoveUnlocked(id)
+	return nil
 }
 
 func (v *Vault) SaveImage(noteID string, data []byte, ext string) (fileName string, err error) {

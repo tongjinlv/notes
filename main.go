@@ -27,6 +27,9 @@ import (
 //go:embed web
 var embeddedWeb embed.FS
 
+//go:embed web/favicon.svg
+var faviconSVG []byte
+
 func newNoteID() string {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
@@ -286,7 +289,7 @@ func buildRouter(vault *Vault, webRoot fs.FS) http.Handler {
 	r.HandleMethodNotAllowed = false
 	r.Use(gin.Recovery())
 	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
-		SkipPaths: []string{"/", "/styles.css", "/app.js"},
+		SkipPaths: []string{"/", "/styles.css", "/app.js", "/favicon.svg", "/favicon.ico"},
 	}))
 
 	registerVaultAPI(r, vault)
@@ -301,14 +304,15 @@ func buildRouter(vault *Vault, webRoot fs.FS) http.Handler {
 	})
 
 	type writeBody struct {
-		Title string `json:"title"`
-		Body  string `json:"body"`
+		Title    string `json:"title"`
+		Body     string `json:"body"`
+		BeforeID string `json:"beforeId"`
 	}
 
 	r.POST("/api/notes", func(c *gin.Context) {
 		var wb writeBody
 		_ = c.ShouldBindJSON(&wb)
-		n, err := vault.Create(wb.Title, wb.Body)
+		n, err := vault.Create(wb.Title, wb.Body, wb.BeforeID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -372,6 +376,22 @@ func buildRouter(vault *Vault, webRoot fs.FS) http.Handler {
 		}
 		c.Data(http.StatusOK, "application/javascript; charset=utf-8", b)
 	})
+	serveFavicon := func(c *gin.Context) {
+		if len(faviconSVG) == 0 {
+			b, err := fs.ReadFile(webRoot, "favicon.svg")
+			if err != nil {
+				c.Status(http.StatusNotFound)
+				return
+			}
+			c.Data(http.StatusOK, "image/svg+xml; charset=utf-8", b)
+			return
+		}
+		c.Header("Cache-Control", "public, max-age=86400")
+		c.Data(http.StatusOK, "image/svg+xml; charset=utf-8", faviconSVG)
+	}
+	r.GET("/favicon.svg", serveFavicon)
+	// 多数浏览器会默认请求 /favicon.ico；无此路由时易表现为「没有图标」
+	r.GET("/favicon.ico", serveFavicon)
 
 	return r
 }

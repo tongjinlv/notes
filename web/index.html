@@ -4,13 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>本地笔记</title>
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <div class="app" id="app">
     <aside class="sidebar" aria-label="笔记列表">
       <header class="sidebar-header">
-        <h1 class="logo">笔记</h1>
+        <h1 class="logo">
+          <img class="logo-icon" src="/favicon.svg" width="28" height="28" alt="" decoding="async" />
+          <span class="logo-text">笔记</span>
+        </h1>
         <div class="sidebar-actions">
           <button type="button" class="btn btn-ghost icon-btn" id="btn-theme" title="切换主题" aria-label="切换明暗主题">
             <span class="icon-theme" aria-hidden="true"></span>
