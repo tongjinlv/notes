@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>本地笔记</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar" aria-label="笔记列表">
+      <header class="sidebar-header">
+        <h1 class="logo">笔记</h1>
+        <div class="sidebar-actions">
+          <button type="button" class="btn btn-ghost icon-btn" id="btn-theme" title="切换主题" aria-label="切换明暗主题">
+            <span class="icon-theme" aria-hidden="true"></span>
+          </button>
+          <button type="button" class="btn btn-primary" id="btn-new">新建</button>
+        </div>
+      </header>
+      <label class="search-wrap">
+        <span class="sr-only">搜索笔记</span>
+        <input type="search" id="search" class="search-input" placeholder="搜索标题或内容…" autocomplete="off" />
+      </label>
+      <ul class="note-list" id="note-list" role="list"></ul>
+      <p class="sidebar-footer" id="note-count"></p>
+    </aside>
+
+    <main class="editor-panel" id="editor-panel">
+      <div class="empty-state" id="empty-state">
+        <p class="empty-title">选择或创建一条笔记</p>
+        <p class="empty-hint">左侧点「新建」，或从列表中选择已有笔记。</p>
+      </div>
+
+      <div class="editor-wrap hidden" id="editor-wrap">
+        <header class="editor-toolbar">
+          <input
+            type="text"
+            id="note-title"
+            class="note-title-input"
+            placeholder="无标题笔记"
+            maxlength="200"
+            aria-label="笔记标题"
+          />
+          <div class="toolbar-right">
+            <span class="saved-hint" id="saved-hint" aria-live="polite"></span>
+            <button type="button" class="btn btn-danger btn-sm" id="btn-delete">删除</button>
+          </div>
+        </header>
+        <div class="editor-subbar">
+          <div class="view-tabs" role="tablist" aria-label="正文视图">
+            <button type="button" class="tab" id="tab-edit" role="tab" aria-selected="false">编辑</button>
+            <button type="button" class="tab active" id="tab-preview" role="tab" aria-selected="true">预览</button>
+          </div>
+          <span class="md-hint">Markdown，支持粘贴或拖入图片</span>
+        </div>
+        <div class="editor-main" id="editor-main">
+          <textarea
+            id="note-body"
+            class="note-body hidden"
+            placeholder="在此编写 Markdown…&#10;&#10;可粘贴截图（Ctrl+V）或将图片拖入此区域。"
+            spellcheck="true"
+            aria-label="笔记正文 Markdown"
+          ></textarea>
+          <div
+            id="note-preview"
+            class="note-preview markdown-body"
+            role="tabpanel"
+            aria-label="Markdown 预览"
+          ></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

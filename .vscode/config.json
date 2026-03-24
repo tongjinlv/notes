@@ -1,0 +1,13 @@
+{
+  "ssh": {
+    "host": "10.0.0.1",
+    "port": 22,
+    "username": "tom",
+    "privateKeyPath": "c:\\Users\\jinlv.tong\\.ssh\\id_rsa",
+    "passphrase": "11"
+  },
+  "remoteBasePath": "/home/tom/work/test/",
+  "runCommand": "make && ./nos",
+  "localCommand": "",
+  "localCommand1": ""
+}

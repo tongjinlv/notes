@@ -1,0 +1,25 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		}
+	],
+	"launch": {
+		"version": "0.2.0",
+		"configurations": []
+	},
+	"settings": {
+		"files.associations": {
+			"string.h": "c",
+			"nos.h": "c",
+			"test_unit.h": "c",
+			"soft_timer.h": "c",
+			"face.h": "c",
+			"typeinfo": "c",
+			"stdio.h": "c",
+			"tools.h": "c",
+			"stdint.h": "c",
+			"variable_storage.h": "c"
+		}
+	}
+}
