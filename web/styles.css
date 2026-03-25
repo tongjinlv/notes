@@ -71,12 +71,72 @@ body {
   max-height: 100dvh;
   min-height: 0;
   overflow: hidden;
+  transition: grid-template-columns 0.22s ease, grid-template-rows 0.22s ease;
+}
+
+.app.sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.app.sidebar-collapsed .sidebar {
+  min-width: 0;
+  overflow: hidden;
+  border-right-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-expand-fab {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  z-index: 30;
+  width: 2rem;
+  height: 3.25rem;
+  margin-top: -1.625rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  line-height: 0;
+}
+
+.sidebar-expand-fab:not([hidden]) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-expand-fab:hover {
+  color: var(--text);
+  background: var(--bg-sidebar);
+}
+
+.icon-sidebar-collapse::before {
+  content: "«";
+  font-size: 1.1rem;
+}
+
+.icon-sidebar-expand::before {
+  content: "»";
+  font-size: 1rem;
 }
 
 @media (max-width: 720px) {
   .app {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 42vh) minmax(0, 1fr);
+  }
+
+  .app.sidebar-collapsed {
+    grid-template-columns: 1fr;
+    grid-template-rows: 0 minmax(0, 1fr);
   }
 
   .sidebar {
@@ -127,8 +187,14 @@ body {
 
 .sidebar-actions {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 0.35rem;
+}
+
+.sidebar-actions > .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .btn {

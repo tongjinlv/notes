@@ -11,13 +11,24 @@
 </head>
 <body>
   <div class="app" id="app">
-    <aside class="sidebar" aria-label="笔记列表">
+    <aside class="sidebar" id="sidebar" aria-label="笔记列表">
       <header class="sidebar-header">
         <h1 class="logo">
           <img class="logo-icon" src="/favicon.svg" width="28" height="28" alt="" decoding="async" />
           <span class="logo-text">笔记</span>
         </h1>
         <div class="sidebar-actions">
+          <button
+            type="button"
+            class="btn btn-ghost icon-btn"
+            id="btn-sidebar-collapse"
+            title="收起侧栏"
+            aria-label="收起笔记列表"
+            aria-expanded="true"
+            aria-controls="sidebar"
+          >
+            <span class="icon-sidebar-collapse" aria-hidden="true"></span>
+          </button>
           <button type="button" class="btn btn-ghost icon-btn" id="btn-theme" title="切换主题" aria-label="切换明暗主题">
             <span class="icon-theme" aria-hidden="true"></span>
           </button>
@@ -33,6 +44,17 @@
     </aside>
 
     <main class="editor-panel" id="editor-panel">
+      <button
+        type="button"
+        class="sidebar-expand-fab"
+        id="btn-sidebar-expand"
+        hidden
+        title="展开笔记列表"
+        aria-label="展开笔记列表"
+        aria-controls="sidebar"
+      >
+        <span class="icon-sidebar-expand" aria-hidden="true"></span>
+      </button>
       <div class="empty-state" id="empty-state">
         <p class="empty-title">选择或创建一条笔记</p>
         <p class="empty-hint">左侧点「新建」，或从列表中选择已有笔记。</p>

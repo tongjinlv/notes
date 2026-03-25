@@ -2,10 +2,15 @@
   "use strict";
 
   const THEME_KEY = "local-notes-theme";
+  const SIDEBAR_KEY = "local-notes-sidebar-collapsed";
 
   /** @typedef {{ id: string, title: string, body: string, updatedAt: number, dir: string }} Note */
 
   const els = {
+    app: document.getElementById("app"),
+    sidebar: document.getElementById("sidebar"),
+    btnSidebarCollapse: document.getElementById("btn-sidebar-collapse"),
+    btnSidebarExpand: document.getElementById("btn-sidebar-expand"),
     noteList: document.getElementById("note-list"),
     search: document.getElementById("search"),
     btnNew: document.getElementById("btn-new"),
@@ -46,6 +51,32 @@
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     const theme = stored === "light" || stored === "dark" ? stored : prefersDark ? "dark" : "light";
     document.documentElement.setAttribute("data-theme", theme);
+  }
+
+  function applySidebarCollapsed(collapsed) {
+    if (!els.app || !els.sidebar || !els.btnSidebarCollapse || !els.btnSidebarExpand) return;
+    els.app.classList.toggle("sidebar-collapsed", collapsed);
+    els.sidebar.setAttribute("aria-hidden", collapsed ? "true" : "false");
+    els.btnSidebarCollapse.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    if (collapsed) els.btnSidebarExpand.removeAttribute("hidden");
+    else els.btnSidebarExpand.setAttribute("hidden", "");
+    localStorage.setItem(SIDEBAR_KEY, collapsed ? "1" : "0");
+  }
+
+  function loadSidebarState() {
+    applySidebarCollapsed(localStorage.getItem(SIDEBAR_KEY) === "1");
+  }
+
+  function collapseSidebar() {
+    if (!els.app?.classList.contains("sidebar-collapsed") && els.sidebar?.contains(document.activeElement)) {
+      els.btnSidebarExpand?.focus();
+    }
+    applySidebarCollapsed(true);
+  }
+
+  function expandSidebar() {
+    applySidebarCollapsed(false);
+    els.btnSidebarCollapse?.focus();
   }
 
   function toggleTheme() {
@@ -526,6 +557,9 @@
 
   els.btnTheme.addEventListener("click", toggleTheme);
 
+  els.btnSidebarCollapse?.addEventListener("click", collapseSidebar);
+  els.btnSidebarExpand?.addEventListener("click", expandSidebar);
+
   els.search.addEventListener("input", renderList);
 
   ["input", "change"].forEach((ev) => {
@@ -541,6 +575,7 @@
   });
 
   loadTheme();
+  loadSidebarState();
   refreshNotes()
     .then(() => {
       renderList();
