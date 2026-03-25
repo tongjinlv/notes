@@ -49,9 +49,148 @@
   /** 0 表示尚未测量，用 VIRTUAL_ROW_ESTIMATE_PX */
   let virtualRowHeightPx = 0;
   let virtualListScrollRaf = 0;
+  let authConfigured = false;
+  let authEnabled = false;
+  /** @type {{ login: string, name?: string, avatarUrl?: string } | null} */
+  let authUser = null;
+
+  function noteCountWhenNoNotes() {
+    if (!authConfigured) return "配置 githubOAuth 并重启服务后可用";
+    if (authEnabled && !authUser) return "登录后加载笔记";
+    return "暂无笔记";
+  }
+
+  async function apiFetch(url, opts) {
+    const r = await fetch(url, { credentials: "same-origin", ...(opts || {}) });
+    const p = String(url);
+    if (r.status === 503 && !p.includes("/api/auth/")) {
+      await refreshAuth();
+    }
+    if (r.status === 401 && !p.includes("/api/auth/") && !p.endsWith("/auth/logout")) {
+      await refreshAuth();
+      if (authEnabled && !authUser) clearAppForLogout();
+    }
+    return r;
+  }
+
+  async function refreshAuth() {
+    try {
+      const r = await fetch("/api/auth/status", { credentials: "same-origin" });
+      const j = await r.json();
+      authConfigured = !!j.configured;
+      authEnabled = !!j.enabled;
+      authUser = j.user && typeof j.user === "object" ? j.user : null;
+    } catch {
+      authConfigured = false;
+      authEnabled = false;
+      authUser = null;
+    }
+    applyAuthUI();
+  }
+
+  function applyAuthUI() {
+    const gate = document.getElementById("auth-gate");
+    const bar = document.getElementById("auth-bar");
+    const titleEl = document.getElementById("auth-gate-title");
+    const configEl = document.getElementById("auth-gate-config");
+    const hintLogin = document.getElementById("auth-gate-hint-login");
+
+    if (!authConfigured) {
+      if (gate) gate.classList.remove("hidden");
+      if (titleEl) titleEl.textContent = "尚未配置 GitHub 登录";
+      if (configEl) {
+        configEl.textContent =
+          "请在 notes-config.json 中添加 githubOAuth（clientId、clientSecret、callbackUrl、cookieSecret），保存后重启本程序。";
+        configEl.classList.remove("hidden");
+      }
+      if (hintLogin) {
+        hintLogin.textContent = "配置并重启后，点下面按钮会跳转到 GitHub（未配置时会先看到说明页）。";
+        hintLogin.classList.remove("hidden");
+      }
+      if (!bar) return;
+      bar.classList.add("hidden");
+      bar.innerHTML = "";
+      return;
+    }
+
+    if (configEl) {
+      configEl.textContent = "";
+      configEl.classList.add("hidden");
+    }
+    if (hintLogin) {
+      hintLogin.textContent = "点击下方按钮将跳转到 GitHub 授权，完成后会回到本页。";
+      hintLogin.classList.remove("hidden");
+    }
+    if (titleEl) titleEl.textContent = "需要登录后才能使用笔记";
+
+    if (gate) gate.classList.toggle("hidden", !(!authUser));
+    if (!bar) return;
+    if (authEnabled && authUser) {
+      bar.classList.remove("hidden");
+      const login = (authUser.login || "").toString();
+      const disp = (authUser.name || authUser.login || "").toString();
+      const av = (authUser.avatarUrl || "").toString();
+      let img = "";
+      if (/^https?:\/\//i.test(av)) {
+        img =
+          '<img class="auth-bar-avatar" src="' +
+          escapeAttr(av) +
+          '" width="24" height="24" alt="" decoding="async" />';
+      }
+      bar.innerHTML =
+        img +
+        '<span class="auth-bar-login" title="' +
+        escapeAttr(login) +
+        '">' +
+        escapeHtml(disp) +
+        "</span>" +
+        '<button type="button" class="btn btn-ghost btn-sm" id="btn-logout">退出</button>';
+      const lo = document.getElementById("btn-logout");
+      if (lo) lo.addEventListener("click", onLogout, { once: true });
+    } else {
+      bar.classList.add("hidden");
+      bar.innerHTML = "";
+    }
+  }
+
+  function clearAppForLogout() {
+    notes = [];
+    activeId = null;
+    activeNoteDir = "";
+    virtualRowHeightPx = 0;
+    virtualFiltered = [];
+    els.title.value = "";
+    els.body.value = "";
+    els.preview.innerHTML = "";
+    showEditor(false);
+    if (searchListTimer) {
+      clearTimeout(searchListTimer);
+      searchListTimer = null;
+    }
+    els.noteList.innerHTML = "";
+    renderList();
+  }
+
+  async function onLogout() {
+    try {
+      await apiFetch("/auth/logout", { method: "POST" });
+    } catch {
+      /* ignore */
+    }
+    await refreshAuth();
+    clearAppForLogout();
+  }
 
   async function refreshNotes() {
-    const r = await fetch("/api/notes");
+    const r = await apiFetch("/api/notes");
+    if (r.status === 503) {
+      notes = [];
+      return;
+    }
+    if (r.status === 401) {
+      notes = [];
+      throw new Error("unauthorized");
+    }
     if (!r.ok) throw new Error("load failed");
     const data = await r.json();
     notes = Array.isArray(data) ? data : [];
@@ -363,7 +502,7 @@
       listEl.scrollTop = 0;
       virtualRowHeightPx = 0;
       applyListTabIndices();
-      if (notes.length === 0) els.noteCount.textContent = "暂无笔记";
+      if (notes.length === 0) els.noteCount.textContent = noteCountWhenNoNotes();
       else {
         const qTrim = query.trim();
         const multi = searchTokens(query).length > 1;
@@ -398,7 +537,7 @@
     const qTrim = query.trim();
     const multi = searchTokens(query).length > 1;
     if (notes.length === 0) {
-      els.noteCount.textContent = "暂无笔记";
+      els.noteCount.textContent = noteCountWhenNoNotes();
       return;
     }
     let hint = "";
@@ -573,7 +712,7 @@
     const fd = new FormData();
     fd.append("note", activeId);
     fd.append("file", file, file.name || "image.png");
-    const r = await fetch("/api/media", { method: "POST", body: fd });
+    const r = await apiFetch("/api/media", { method: "POST", body: fd });
     if (!r.ok) {
       let msg = r.statusText;
       try {
@@ -628,7 +767,7 @@
     const title = els.title.value;
     const body = els.body.value;
     try {
-      const r = await fetch("/api/notes/" + encodeURIComponent(note.id), {
+      const r = await apiFetch("/api/notes/" + encodeURIComponent(note.id), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, body }),
@@ -659,6 +798,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title, body }),
       keepalive: true,
+      credentials: "same-origin",
     }).catch(() => {});
   }
 
@@ -690,7 +830,7 @@
 
   async function createNote() {
     const beforeId = activeId || "";
-    const r = await fetch("/api/notes", {
+    const r = await apiFetch("/api/notes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: "", body: "", beforeId }),
@@ -714,7 +854,7 @@
     const title = listTitle(note);
     if (!confirm(`确定删除「${title}」？`)) return;
     const id = activeId;
-    const r = await fetch("/api/notes/" + encodeURIComponent(id), { method: "DELETE" });
+    const r = await apiFetch("/api/notes/" + encodeURIComponent(id), { method: "DELETE" });
     if (!r.ok && r.status !== 204) {
       setSavedHint("删除失败");
       return;
@@ -872,17 +1012,64 @@
     flushEditorKeepalive();
   });
 
+  /** 整页跳转授权：比弹窗更稳，避免小窗里 GitHub 页加载慢、被拦截或脚本异常。 */
+  function startGitHubLogin() {
+    window.location.assign("/auth/github/start");
+  }
+
+  document.getElementById("auth-gate")?.addEventListener("click", (e) => {
+    if (e.target && e.target.id === "btn-github-login") {
+      e.preventDefault();
+      startGitHubLogin();
+    }
+  });
+
+  window.addEventListener("message", (ev) => {
+    if (ev.origin !== window.location.origin) return;
+    const d = ev.data;
+    if (!d || d.type !== "notes-github-oauth") return;
+    if (d.ok) {
+      refreshAuth().then(async () => {
+        if (authConfigured && authUser) {
+          try {
+            await refreshNotes();
+            renderList();
+            showEditor(false);
+          } catch {
+            notes = [];
+            renderList();
+          }
+        }
+      });
+      return;
+    }
+    refreshAuth();
+  });
+
   loadTheme();
   loadSidebarState();
-  refreshNotes()
-    .then(() => {
+
+  async function boot() {
+    await refreshAuth();
+    if (!authConfigured) {
+      clearAppForLogout();
+      return;
+    }
+    if (authEnabled && !authUser) {
+      clearAppForLogout();
+      return;
+    }
+    try {
+      await refreshNotes();
       renderList();
       showEditor(false);
-    })
-    .catch(() => {
+    } catch {
       notes = [];
       renderList();
       els.noteCount.textContent = "无法连接服务器，请先运行笔记程序";
       showEditor(false);
-    });
+    }
+  }
+
+  boot();
 })();

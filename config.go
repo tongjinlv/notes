@@ -9,10 +9,20 @@ import (
 
 const defaultConfigFileName = "notes-config.json"
 
+// GitHubOAuthConfig 可选：未配置时服务仍可启动，页面会提示填写；配置并重启后需登录，笔记在 users/<登录名>/。
+type GitHubOAuthConfig struct {
+	ClientID      string   `json:"clientId"`
+	ClientSecret  string   `json:"clientSecret"`
+	CallbackURL   string   `json:"callbackUrl"`
+	CookieSecret  string   `json:"cookieSecret"`
+	AllowedLogins []string `json:"allowedLogins"`
+}
+
 // appConfig 对应 notes-config.json；缺省 listen 为 :8787。
 type appConfig struct {
-	Listen string `json:"listen"`
-	Data   string `json:"data"`
+	Listen      string             `json:"listen"`
+	Data        string             `json:"data"`
+	GitHubOAuth *GitHubOAuthConfig `json:"githubOAuth"`
 }
 
 func defaultAppConfig() appConfig {

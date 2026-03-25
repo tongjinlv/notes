@@ -40,6 +40,7 @@
         <input type="search" id="search" class="search-input" placeholder="标题或正文；空格=同时包含多词" autocomplete="off" title="按 / 快速聚焦；↓ 进入列表" />
       </label>
       <ul class="note-list" id="note-list" role="list"></ul>
+      <div id="auth-bar" class="auth-bar hidden" aria-label="登录状态"></div>
       <p class="sidebar-footer" id="note-count"></p>
     </aside>
 
@@ -99,6 +100,15 @@
         </div>
       </div>
     </main>
+  </div>
+
+  <div id="auth-gate" class="auth-gate hidden" role="dialog" aria-modal="true" aria-labelledby="auth-gate-title">
+    <div class="auth-gate-panel">
+      <p id="auth-gate-title" class="auth-gate-title">需要登录后才能使用笔记</p>
+      <p id="auth-gate-config" class="auth-gate-hint hidden"></p>
+      <p id="auth-gate-hint-login" class="auth-gate-hint">点击下方按钮将跳转到 GitHub 完成授权，完成后会自动回到笔记页。</p>
+      <button type="button" id="btn-github-login" class="btn btn-primary auth-github-btn">使用 GitHub 登录</button>
+    </div>
   </div>
 
   <script src="/app.js"></script>

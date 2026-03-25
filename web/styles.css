@@ -366,6 +366,89 @@ body {
   margin-top: 2px;
 }
 
+.auth-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0.5rem 0;
+  margin: 0 0.25rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.auth-bar-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.auth-bar-login {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 10rem;
+}
+
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(28 25 23 / 45%);
+  backdrop-filter: blur(2px);
+}
+
+[data-theme="dark"] .auth-gate {
+  background: rgb(0 0 0 / 55%);
+}
+
+.auth-gate.hidden {
+  display: none;
+}
+
+.auth-gate-panel {
+  max-width: 22rem;
+  margin: 1rem;
+  padding: 1.5rem;
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.auth-gate-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.auth-gate-hint {
+  margin: 0 0 1.25rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.auth-github-btn {
+  display: inline-flex;
+  text-decoration: none;
+  justify-content: center;
+  align-items: center;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
+
 .sidebar-footer {
   margin: 0;
   padding: 0.5rem 0.5rem 0;

@@ -1,4 +1,11 @@
 {
   "listen": "127.0.0.1:8787",
-  "data": ""
+  "data": "",
+  "githubOAuth": {
+    "clientId": "Ov23liDDpScBSVFjWB0W",
+    "clientSecret": "6db1123898e0defba1242965e1af73d03d925662",
+    "callbackUrl": "http://127.0.0.1:8787/auth/github/callback",
+    "cookieSecret": "Zq8kP2vN9xR4mL7wY1cH5jF3bT0sA6eU8iO2qW4gM9nB3vK7",
+    "allowedLogins": []
+  }
 }

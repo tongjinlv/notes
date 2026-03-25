@@ -137,8 +137,9 @@ func tryMigrateLegacy(vaultRoot, explicitLegacy string) {
 	}
 }
 
-func registerVaultAPI(r *gin.Engine, v *Vault) {
-	r.POST("/api/media", func(c *gin.Context) {
+func registerVaultAPI(g *gin.RouterGroup) {
+	g.POST("/media", func(c *gin.Context) {
+		v := mustCtxVault(c)
 		noteID := strings.TrimSpace(c.PostForm("note"))
 		if !safeNoteID(noteID) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "需要表单字段 note（笔记 id）"})
@@ -183,7 +184,8 @@ func registerVaultAPI(r *gin.Engine, v *Vault) {
 		c.JSON(http.StatusCreated, gin.H{"name": name})
 	})
 
-	r.GET("/api/vault/*filepath", func(c *gin.Context) {
+	g.GET("/vault/*filepath", func(c *gin.Context) {
+		v := mustCtxVault(c)
 		p := strings.TrimPrefix(c.Param("filepath"), "/")
 		p = filepath.ToSlash(filepath.Clean(p))
 		if p == "." || p == "" || strings.Contains(p, "..") {
@@ -250,7 +252,7 @@ func checkListenAddr(addr string) error {
 	return ln.Close()
 }
 
-func buildRouter(vault *Vault, webRoot fs.FS) http.Handler {
+func buildRouter(vaultBase string, webRoot fs.FS, gh *githubAuth) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.MaxMultipartMemory = maxImageUpload
@@ -259,13 +261,18 @@ func buildRouter(vault *Vault, webRoot fs.FS) http.Handler {
 	r.HandleMethodNotAllowed = false
 	r.Use(gin.Recovery())
 	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
-		SkipPaths: []string{"/", "/styles.css", "/app.js", "/favicon.svg", "/favicon.ico"},
+		SkipPaths: []string{"/", "/styles.css", "/app.js", "/favicon.svg", "/favicon.ico", "/api/auth/status", "/auth/github/callback"},
 	}))
 
-	registerVaultAPI(r, vault)
+	r.GET("/api/auth/status", handleAuthStatus(gh))
+	registerAuthRoutes(r, gh)
 
-	r.GET("/api/notes", func(c *gin.Context) {
-		notes, err := vault.List()
+	api := r.Group("/api", requireGitHubOAuthReady(gh), requireAuthAndUserVault(vaultBase, gh))
+	registerVaultAPI(api)
+
+	api.GET("/notes", func(c *gin.Context) {
+		v := mustCtxVault(c)
+		notes, err := v.List()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -279,10 +286,11 @@ func buildRouter(vault *Vault, webRoot fs.FS) http.Handler {
 		BeforeID string `json:"beforeId"`
 	}
 
-	r.POST("/api/notes", func(c *gin.Context) {
+	api.POST("/notes", func(c *gin.Context) {
+		v := mustCtxVault(c)
 		var wb writeBody
 		_ = c.ShouldBindJSON(&wb)
-		n, err := vault.Create(wb.Title, wb.Body, wb.BeforeID)
+		n, err := v.Create(wb.Title, wb.Body, wb.BeforeID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -290,14 +298,15 @@ func buildRouter(vault *Vault, webRoot fs.FS) http.Handler {
 		c.JSON(http.StatusCreated, n)
 	})
 
-	r.PUT("/api/notes/:id", func(c *gin.Context) {
+	api.PUT("/notes/:id", func(c *gin.Context) {
+		v := mustCtxVault(c)
 		id := c.Param("id")
 		var wb writeBody
 		if err := c.ShouldBindJSON(&wb); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
 			return
 		}
-		n, err := vault.Update(id, wb.Title, wb.Body)
+		n, err := v.Update(id, wb.Title, wb.Body)
 		if err != nil {
 			if err == os.ErrNotExist {
 				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
@@ -309,9 +318,10 @@ func buildRouter(vault *Vault, webRoot fs.FS) http.Handler {
 		c.JSON(http.StatusOK, n)
 	})
 
-	r.DELETE("/api/notes/:id", func(c *gin.Context) {
+	api.DELETE("/notes/:id", func(c *gin.Context) {
+		v := mustCtxVault(c)
 		id := c.Param("id")
-		if err := vault.Delete(id); err != nil {
+		if err := v.Delete(id); err != nil {
 			if err == os.ErrNotExist {
 				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 				return
@@ -368,9 +378,9 @@ func buildRouter(vault *Vault, webRoot fs.FS) http.Handler {
 
 type program struct {
 	addr      string
-	vaultRoot string
-	vault     *Vault
+	vaultBase string
 	web       fs.FS
+	github    *githubAuth
 	srv       *http.Server
 }
 
@@ -416,13 +426,13 @@ func (consoleLogger) Errorf(format string, args ...interface{}) error {
 
 func (p *program) Start(s service.Service) error {
 	lg := appLog(s)
-	handler := buildRouter(p.vault, p.web)
+	handler := buildRouter(p.vaultBase, p.web, p.github)
 	p.srv = &http.Server{
 		Addr:    p.addr,
 		Handler: handler,
 	}
 	go func() {
-		_ = lg.Infof("笔记服务监听 %s，Markdown 仓库 %s", p.addr, p.vaultRoot)
+		_ = lg.Infof("笔记服务监听 %s，仓库根 %s（每用户 users/<登录>/）", p.addr, p.vaultBase)
 		if err := p.srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			_ = lg.Errorf("HTTP 服务退出: %v", err)
 		}
@@ -445,8 +455,8 @@ func (p *program) Stop(s service.Service) error {
 	return nil
 }
 
-func runHTTPServerForeground(addr string, vault *Vault, webRoot fs.FS) error {
-	handler := buildRouter(vault, webRoot)
+func runHTTPServerForeground(addr string, vaultBase string, webRoot fs.FS, gh *githubAuth) error {
+	handler := buildRouter(vaultBase, webRoot, gh)
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: handler,
@@ -496,13 +506,45 @@ func main() {
 	}
 	listenAddr := normalizeListenAddr(strings.TrimSpace(fileCfg.Listen))
 
-	vaultRoot, legacyJSON := computeVaultRoot(resolveDataPathForConfig(fileCfg.Data))
-	if err := os.MkdirAll(vaultRoot, 0o755); err != nil {
-		log.Fatalf("创建仓库目录失败 %s: %v", vaultRoot, err)
+	var gh *githubAuth
+	if fileCfg.GitHubOAuth != nil {
+		gc := normalizeGitHubOAuth(*fileCfg.GitHubOAuth)
+		if err := validateGitHubOAuth(gc); err != nil {
+			log.Printf("提示: githubOAuth 未填全或无效，服务已启动但无法登录（%v）", err)
+		} else {
+			gh = &githubAuth{cfg: gc}
+		}
+	} else {
+		log.Printf("提示: 未配置 githubOAuth，服务已启动；在 notes-config.json 中填写并重启后即可 GitHub 登录。")
 	}
-	tryMigrateLegacy(vaultRoot, legacyJSON)
 
-	vault := NewVault(vaultRoot)
+	vaultBase, legacyJSON := computeVaultRoot(resolveDataPathForConfig(fileCfg.Data))
+	if err := os.MkdirAll(vaultBase, 0o755); err != nil {
+		log.Fatalf("创建仓库根目录失败 %s: %v", vaultBase, err)
+	}
+	usersDir := filepath.Join(vaultBase, "users")
+	if err := os.MkdirAll(usersDir, 0o755); err != nil {
+		log.Fatalf("创建 users 目录失败 %s: %v", usersDir, err)
+	}
+	tryMigrateLegacy(vaultBase, legacyJSON)
+	if vaultHasAnyNote(vaultBase) {
+		entries, rerr := os.ReadDir(usersDir)
+		if rerr == nil {
+			hasUserNotes := false
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				if vaultHasAnyNote(filepath.Join(usersDir, e.Name())) {
+					hasUserNotes = true
+					break
+				}
+			}
+			if !hasUserNotes {
+				log.Printf("提示: 在 %s 根下检测到旧版笔记数据；多用户模式下笔记应在 users/<GitHub登录>/ 下，请自行迁移或备份后移动目录。", vaultBase)
+			}
+		}
+	}
 
 	webRoot, err := fs.Sub(embeddedWeb, "web")
 	if err != nil {
@@ -518,9 +560,9 @@ func main() {
 
 	prg := &program{
 		addr:      listenAddr,
-		vaultRoot: vaultRoot,
-		vault:     vault,
+		vaultBase: vaultBase,
 		web:       webRoot,
+		github:    gh,
 	}
 
 	if *svcFlag != "" {
@@ -535,7 +577,10 @@ func main() {
 	}
 
 	log.Printf("配置: %s", cfgFile)
-	log.Printf("Markdown 仓库: %s （结构 YYYY/MM/DD/<id>/note.md，图片与 note.md 同目录）", vaultRoot)
+	log.Printf("Markdown 仓库根: %s/users/<GitHub登录>/（其下 YYYY/MM/DD/<id>/note.md）", vaultBase)
+	if gh != nil {
+		log.Println("GitHub 登录已就绪（OAuth App 的 callbackUrl 须与配置完全一致）")
+	}
 	log.Printf("监听: %s | 在浏览器打开: %s", listenAddr, browserOpenURL(listenAddr))
 	if bindsBroad(listenAddr) {
 		log.Printf("多网卡监听：其它机器请用 http://<本机IP>%s；注意防火墙与安全组", portSuffix(listenAddr))
@@ -548,9 +593,8 @@ func main() {
 			cfgFile,
 		)
 	}
-	log.Printf("listenAddr: %s", listenAddr)
 	if service.Interactive() {
-		if err := runHTTPServerForeground(listenAddr, vault, webRoot); err != nil {
+		if err := runHTTPServerForeground(listenAddr, vaultBase, webRoot, gh); err != nil {
 			log.Fatal(err)
 		}
 		return
