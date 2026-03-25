@@ -6,7 +6,7 @@
     "privateKeyPath": "c:\\Users\\jinlv.tong\\.ssh\\id_rsa",
     "passphrase": "11"
   },
-  "remoteBasePath": "/home/tom/work/test/",
+  "remoteBasePath": "/home/tom/work/notes/",
   "runCommand": "go run .",
   "localCommand": "build.bat run",
   "localCommand1": "build.bat  build"

@@ -1,0 +1,27 @@
+# 使用前请修改 ExecStart 中的绝对路径（二进制与 notes-config.json）。
+#
+# 系统级（常见）：
+#   sudo cp LocalNotes.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now LocalNotes
+#
+# 用户级（当前用户、无 root）：
+#   将下方 [Install] 里 WantedBy= 改为: default.target
+#   mkdir -p ~/.config/systemd/user
+#   cp LocalNotes.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now LocalNotes
+
+[Unit]
+Description=本地网页笔记 (local-notes)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/notes/notes -config=/opt/notes/notes-config.json
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
