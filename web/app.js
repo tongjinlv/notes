@@ -3,6 +3,9 @@
 
   const THEME_KEY = "local-notes-theme";
   const SIDEBAR_KEY = "local-notes-sidebar-collapsed";
+  /** 单条笔记正文参与检索的最大字符数，避免极大文件拖慢输入 */
+  const SEARCH_BODY_MAX_CHARS = 24000;
+  const SEARCH_LIST_DEBOUNCE_MS = 110;
 
   /** @typedef {{ id: string, title: string, body: string, updatedAt: number, dir: string }} Note */
 
@@ -38,6 +41,7 @@
   let viewMode = "preview";
   /** 当前笔记在仓库中的相对目录，如 2026/03/24/n_xxx，用于解析相对路径图片 */
   let activeNoteDir = "";
+  let searchListTimer = null;
 
   async function refreshNotes() {
     const r = await fetch("/api/notes");
@@ -127,20 +131,84 @@
     return pick.slice(0, 44) || "无标题笔记";
   }
 
-  /** 无侧栏顺序文件时服务端按 dir+id；搜索命中项仍按当前 notes 数组顺序（与 API 一致） */
+  function searchTokens(raw) {
+    return raw
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length > 0);
+  }
+
+  /**
+   * 无搜索词时顺序与 API 一致；有搜索时：空格分词须全部命中（标题或正文前段），标题命中数多的排前。
+   */
   function filterNotes(query) {
-    const q = query.trim().toLowerCase();
-    if (!q) return [...notes];
-    return notes.filter((n) => {
-      return n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q);
+    const tokens = searchTokens(query);
+    if (tokens.length === 0) return [...notes];
+
+    const scored = [];
+    for (const n of notes) {
+      const titleL = n.title.toLowerCase();
+      const bodySlice =
+        n.body.length > SEARCH_BODY_MAX_CHARS ? n.body.slice(0, SEARCH_BODY_MAX_CHARS) : n.body;
+      const bodyL = bodySlice.toLowerCase();
+
+      let titleHits = 0;
+      let ok = true;
+      for (const t of tokens) {
+        const inT = titleL.includes(t);
+        const inB = bodyL.includes(t);
+        if (!inT && !inB) {
+          ok = false;
+          break;
+        }
+        if (inT) titleHits++;
+      }
+      if (!ok) continue;
+      scored.push({ n, titleHits, updatedAt: n.updatedAt });
+    }
+
+    scored.sort((a, b) => {
+      if (b.titleHits !== a.titleHits) return b.titleHits - a.titleHits;
+      return b.updatedAt - a.updatedAt;
     });
+    return scored.map((x) => x.n);
+  }
+
+  function applyListTabIndices() {
+    const btns = [...els.noteList.querySelectorAll(".note-item-btn")];
+    btns.forEach((b) => {
+      b.tabIndex = -1;
+    });
+    const pick = btns.find((b) => b.dataset.id === activeId) || btns[0];
+    if (pick) pick.tabIndex = 0;
+  }
+
+  function focusNoteListButton(btn) {
+    const btns = [...els.noteList.querySelectorAll(".note-item-btn")];
+    btns.forEach((b) => {
+      b.tabIndex = -1;
+    });
+    if (!btn || !btns.includes(btn)) return;
+    btn.tabIndex = 0;
+    btn.focus();
+    btn.scrollIntoView({ block: "nearest" });
   }
 
   function renderList() {
+    if (searchListTimer) {
+      clearTimeout(searchListTimer);
+      searchListTimer = null;
+    }
+
     const query = els.search.value;
     const filtered = filterNotes(query);
     const listEl = els.noteList;
     const prevScrollTop = listEl.scrollTop;
+    const ae = document.activeElement;
+    const wasListBtn = ae?.classList?.contains("note-item-btn") && listEl.contains(ae);
+    const prevListId = wasListBtn ? ae.dataset.id : null;
+
     listEl.innerHTML = "";
     const frag = document.createDocumentFragment();
     for (const note of filtered) {
@@ -163,10 +231,35 @@
     }
     listEl.append(frag);
     listEl.scrollTop = prevScrollTop;
-    els.noteCount.textContent =
-      notes.length === 0
-        ? "暂无笔记"
-        : `共 ${notes.length} 条${query.trim() ? `，显示 ${filtered.length} 条` : ""}`;
+
+    if (wasListBtn && prevListId) {
+      const again = [...listEl.querySelectorAll(".note-item-btn")].find((b) => b.dataset.id === prevListId);
+      if (again) focusNoteListButton(again);
+      else applyListTabIndices();
+    } else {
+      applyListTabIndices();
+    }
+
+    const qTrim = query.trim();
+    const multi = searchTokens(query).length > 1;
+    let hint = "";
+    if (notes.length === 0) {
+      els.noteCount.textContent = "暂无笔记";
+      return;
+    }
+    if (qTrim) {
+      hint = `，显示 ${filtered.length} 条`;
+      hint += multi ? "（多词须同时命中）" : "（标题命中优先）";
+    }
+    els.noteCount.textContent = `共 ${notes.length} 条${hint}`;
+  }
+
+  function scheduleSearchListRender() {
+    clearTimeout(searchListTimer);
+    searchListTimer = setTimeout(() => {
+      searchListTimer = null;
+      renderList();
+    }, SEARCH_LIST_DEBOUNCE_MS);
   }
 
   function showEditor(show) {
@@ -560,7 +653,47 @@
   els.btnSidebarCollapse?.addEventListener("click", collapseSidebar);
   els.btnSidebarExpand?.addEventListener("click", expandSidebar);
 
-  els.search.addEventListener("input", renderList);
+  els.search.addEventListener("input", scheduleSearchListRender);
+  els.search.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      const first = els.noteList.querySelector(".note-item-btn");
+      if (!first) return;
+      e.preventDefault();
+      focusNoteListButton(first);
+      return;
+    }
+    if (e.key === "Escape" && els.search.value) {
+      e.preventDefault();
+      els.search.value = "";
+      renderList();
+    }
+  });
+
+  els.noteList.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const items = [...els.noteList.querySelectorAll(".note-item-btn")];
+    if (!items.length) return;
+    const i = items.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    if (e.key === "ArrowDown") {
+      if (i < items.length - 1) focusNoteListButton(items[i + 1]);
+    } else if (i === 0) {
+      els.search.focus();
+    } else {
+      focusNoteListButton(items[i - 1]);
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    const tag = t && t.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
+    e.preventDefault();
+    if (els.app?.classList.contains("sidebar-collapsed")) expandSidebar();
+    els.search.focus();
+  });
 
   ["input", "change"].forEach((ev) => {
     els.title.addEventListener(ev, scheduleSave);

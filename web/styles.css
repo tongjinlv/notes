@@ -74,6 +74,12 @@ body {
   transition: grid-template-columns 0.22s ease, grid-template-rows 0.22s ease;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .app {
+    transition: none;
+  }
+}
+
 .app.sidebar-collapsed {
   grid-template-columns: 0 minmax(0, 1fr);
 }
@@ -125,7 +131,7 @@ body {
 
 .icon-sidebar-expand::before {
   content: "»";
-  font-size: 1rem;
+  font-size: 1.1rem;
 }
 
 @media (max-width: 720px) {
@@ -330,6 +336,11 @@ body {
   background: var(--bg-elevated);
   border-color: var(--accent);
   box-shadow: var(--shadow);
+}
+
+.note-item-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .note-item-preview {
