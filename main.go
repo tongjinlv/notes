@@ -261,7 +261,7 @@ func buildRouter(vaultBase string, webRoot fs.FS, auth *authBundle) http.Handler
 	r.HandleMethodNotAllowed = false
 	r.Use(gin.Recovery())
 	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
-		SkipPaths: []string{"/", "/styles.css", "/app.js", "/favicon.svg", "/favicon.ico", "/api/auth/status", "/auth/github/callback", "/auth/gitee/callback"},
+		SkipPaths: []string{"/", "/styles.css", "/app.js", "/favicon.svg", "/favicon.ico", "/api/auth/status", "/auth/github/callback", "/auth/gitee/callback", "/vendor/easymde/easymde.min.css", "/vendor/easymde/easymde.min.js"},
 	}))
 
 	r.GET("/api/auth/status", handleAuthStatus(auth))
@@ -358,6 +358,9 @@ func buildRouter(vaultBase string, webRoot fs.FS, auth *authBundle) http.Handler
 		}
 		c.Data(http.StatusOK, "application/javascript; charset=utf-8", b)
 	})
+	if vendorFS, err := fs.Sub(webRoot, "vendor"); err == nil {
+		r.StaticFS("/vendor", http.FS(vendorFS))
+	}
 	serveFavicon := func(c *gin.Context) {
 		if len(faviconSVG) == 0 {
 			b, err := fs.ReadFile(webRoot, "favicon.svg")

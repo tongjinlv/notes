@@ -58,6 +58,79 @@
   /** @type {{ login: string, name?: string, avatarUrl?: string } | null} */
   let authUser = null;
 
+  /** EasyMDE 实例；未加载或降级时为 null */
+  let mdEditor = null;
+
+  function getBodyText() {
+    if (mdEditor) return mdEditor.value();
+    return els.body.value;
+  }
+
+  function setBodyText(s) {
+    const t = String(s);
+    if (mdEditor) mdEditor.value(t);
+    else els.body.value = t;
+  }
+
+  /** @returns {boolean} */
+  function ensureEasyMDE() {
+    if (mdEditor) return true;
+    if (typeof EasyMDE === "undefined") return false;
+    mdEditor = new EasyMDE({
+      element: els.body,
+      spellChecker: false,
+      status: false,
+      autofocus: false,
+      placeholder:
+        "在此编写 Markdown…\n\n可粘贴截图（Ctrl+V）或将图片拖入此区域。",
+      minHeight: "260px",
+      autoDownloadFontAwesome: true,
+      renderingConfig: {
+        singleLineBreaks: false,
+      },
+      toolbar: [
+        "bold",
+        "italic",
+        "strikethrough",
+        "|",
+        "heading-1",
+        "heading-2",
+        "heading-3",
+        "|",
+        "code",
+        "quote",
+        "|",
+        "unordered-list",
+        "ordered-list",
+        "|",
+        "link",
+        "image",
+        "|",
+        "table",
+        "|",
+        "horizontal-rule",
+        "|",
+        "fullscreen",
+        "|",
+        "guide",
+      ],
+    });
+    mdEditor.codemirror.on("change", () => {
+      scheduleSave();
+    });
+    return true;
+  }
+
+  function insertIntoEditor(text) {
+    if (mdEditor) {
+      const cm = mdEditor.codemirror;
+      cm.replaceSelection(text);
+      cm.focus();
+    } else {
+      insertAtCursor(els.body, text);
+    }
+  }
+
   function noteCountWhenNoNotes() {
     if (!authConfigured) return "配置 githubOAuth 或 giteeOAuth 并重启服务后可用";
     if (authEnabled && !authUser) return "登录后加载笔记";
@@ -177,7 +250,7 @@
     virtualRowHeightPx = 0;
     virtualFiltered = [];
     els.title.value = "";
-    els.body.value = "";
+    setBodyText("");
     els.preview.innerHTML = "";
     showEditor(false);
     if (searchListTimer) {
@@ -253,6 +326,9 @@
     virtualRowHeightPx = 0;
     queueMicrotask(() => {
       if (virtualFiltered.length) renderVirtualWindow();
+      if (mdEditor) {
+        requestAnimationFrame(() => mdEditor.codemirror.refresh());
+      }
     });
   }
 
@@ -699,19 +775,30 @@
   }
 
   function updatePreview() {
-    els.preview.innerHTML = renderMarkdown(els.body.value);
+    els.preview.innerHTML = renderMarkdown(getBodyText());
   }
 
   function setViewMode(mode) {
     viewMode = mode;
     const edit = mode === "edit";
+    if (edit) ensureEasyMDE();
     els.tabEdit.classList.toggle("active", edit);
     els.tabPreview.classList.toggle("active", !edit);
     els.tabEdit.setAttribute("aria-selected", edit ? "true" : "false");
     els.tabPreview.setAttribute("aria-selected", edit ? "false" : "true");
-    els.body.classList.toggle("hidden", !edit);
+    const wrap = els.editorMain && els.editorMain.querySelector(".EasyMDEContainer");
+    if (wrap) {
+      wrap.classList.toggle("hidden", !edit);
+    } else {
+      els.body.classList.toggle("hidden", !edit);
+    }
     els.preview.classList.toggle("hidden", edit);
     if (!edit) updatePreview();
+    if (edit && mdEditor) {
+      requestAnimationFrame(() => {
+        mdEditor.codemirror.refresh();
+      });
+    }
   }
 
   function insertAtCursor(ta, text) {
@@ -753,7 +840,7 @@
         setSavedHint("上传图片…");
         const url = await uploadImageFile(file);
         if (viewMode === "preview") setViewMode("edit");
-        insertAtCursor(els.body, "\n\n![](" + url + ")\n\n");
+        insertIntoEditor("\n\n![](" + url + ")\n\n");
         scheduleSave();
       } catch {
         setSavedHint("图片上传失败");
@@ -769,7 +856,7 @@
     activeId = id;
     activeNoteDir = note.dir || "";
     els.title.value = note.title;
-    els.body.value = note.body;
+    setBodyText(note.body);
     setViewMode(startInEdit ? "edit" : "preview");
     showEditor(true);
     els.title.focus();
@@ -782,7 +869,7 @@
     const note = getActiveNote();
     if (!note) return true;
     const title = els.title.value;
-    const body = els.body.value;
+    const body = getBodyText();
     try {
       const r = await apiFetch("/api/notes/" + encodeURIComponent(note.id), {
         method: "PUT",
@@ -809,7 +896,7 @@
     const note = getActiveNote();
     if (!note) return;
     const title = els.title.value;
-    const body = els.body.value;
+    const body = getBodyText();
     fetch("/api/notes/" + encodeURIComponent(note.id), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -880,7 +967,7 @@
     activeId = null;
     activeNoteDir = "";
     els.title.value = "";
-    els.body.value = "";
+    setBodyText("");
     els.preview.innerHTML = "";
     showEditor(false);
     renderList();
@@ -896,31 +983,30 @@
   els.tabEdit.addEventListener("click", () => setViewMode("edit"));
   els.tabPreview.addEventListener("click", () => setViewMode("preview"));
 
-  els.body.addEventListener("paste", async (e) => {
-    const items = e.clipboardData?.items;
-    if (!items || !getActiveNote()) return;
-    for (const item of items) {
-      if (item.kind === "file" && item.type.startsWith("image/")) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (!file) continue;
-        try {
-          setSavedHint("上传图片…");
-          const url = await uploadImageFile(file);
-          if (viewMode === "preview") setViewMode("edit");
-          insertAtCursor(els.body, "\n\n![](" + url + ")\n\n");
-          scheduleSave();
-          setSavedHint("");
-        } catch {
-          setSavedHint("图片上传失败");
-        }
-        break;
-      }
-    }
-  });
-
   const main = els.editorMain;
   if (main) {
+    main.addEventListener("paste", async (e) => {
+      const items = e.clipboardData?.items;
+      if (!items || !getActiveNote()) return;
+      for (const item of items) {
+        if (item.kind === "file" && item.type.startsWith("image/")) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (!file) continue;
+          try {
+            setSavedHint("上传图片…");
+            const url = await uploadImageFile(file);
+            if (viewMode === "preview") setViewMode("edit");
+            insertIntoEditor("\n\n![](" + url + ")\n\n");
+            scheduleSave();
+            setSavedHint("");
+          } catch {
+            setSavedHint("图片上传失败");
+          }
+          break;
+        }
+      }
+    });
     main.addEventListener("dragover", (e) => {
       if (!getActiveNote()) return;
       e.preventDefault();

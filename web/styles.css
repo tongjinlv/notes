@@ -665,6 +665,55 @@ body {
   color: var(--text-muted);
 }
 
+/* EasyMDE（Markdown）：与编辑区同高、随主题配色 */
+.editor-main .EasyMDEContainer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-main .EasyMDEContainer .editor-toolbar {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0.5rem 0.65rem;
+  background: var(--bg-elevated);
+}
+.editor-main .EasyMDEContainer .CodeMirror {
+  flex: 1;
+  min-height: 0;
+  height: auto !important;
+  min-height: 200px;
+  border: none;
+  border-radius: 0;
+  padding: 1rem 1.25rem 1.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1.65;
+  background: var(--bg);
+  color: var(--text);
+}
+.editor-main .EasyMDEContainer .CodeMirror-scroll {
+  min-height: 200px;
+}
+.editor-main .EasyMDEContainer .CodeMirror-gutters {
+  background: var(--bg-sidebar);
+  border-color: var(--border);
+}
+.editor-main .EasyMDEContainer .CodeMirror-linenumber {
+  color: var(--text-muted);
+}
+.editor-main .EasyMDEContainer .CodeMirror-cursor {
+  border-left-color: var(--text);
+}
+.editor-main .EasyMDEContainer .CodeMirror-selected {
+  background: rgb(59 130 246 / 18%);
+}
+[data-theme="dark"] .editor-main .EasyMDEContainer .CodeMirror-selected {
+  background: rgb(96 165 250 / 22%);
+}
+
 .note-preview {
   flex: 1;
   width: 100%;

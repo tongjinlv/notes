@@ -7,6 +7,7 @@
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
   <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="stylesheet" href="/vendor/easymde/easymde.min.css" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -81,7 +82,7 @@
             <button type="button" class="tab" id="tab-edit" role="tab" aria-selected="false">编辑</button>
             <button type="button" class="tab active" id="tab-preview" role="tab" aria-selected="true">预览</button>
           </div>
-          <span class="md-hint">Markdown，支持粘贴或拖入图片</span>
+          <span class="md-hint">Markdown（EasyMDE），支持粘贴或拖入图片</span>
         </div>
         <div class="editor-main" id="editor-main">
           <textarea
@@ -114,6 +115,7 @@
     </div>
   </div>
 
+  <script src="/vendor/easymde/easymde.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
