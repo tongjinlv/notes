@@ -41,11 +41,15 @@ const (
 
 var (
 	publicCacheMu     sync.RWMutex
-	publicCacheVault  string
+	publicCacheKey    string
 	publicCacheAt     time.Time
 	publicCachePosts  []PublicPostItem
 	publicCacheErr    error
 )
+
+func publicPostsCacheKey(vaultBase, vaultPassphrase string) string {
+	return vaultBase + "\x00" + vaultPassphrase
+}
 
 // PublicPostsListResponse 分页列表（JSON）。
 type PublicPostsListResponse struct {
@@ -118,7 +122,7 @@ func parseUsersDirNotePath(dirRel string) (provider, login string, noteParts []s
 }
 
 // collectPublicPosts 扫描 vaultBase/users 下所有已勾选公开的笔记。
-func collectPublicPosts(vaultBase string) ([]PublicPostItem, error) {
+func collectPublicPosts(vaultBase, vaultPassphrase string) ([]PublicPostItem, error) {
 	usersDir := filepath.Join(vaultBase, "users")
 	st, err := os.Stat(usersDir)
 	if err != nil || !st.IsDir() {
@@ -150,7 +154,7 @@ func collectPublicPosts(vaultBase string) ([]PublicPostItem, error) {
 		if info != nil {
 			mt = info.ModTime()
 		}
-		note, e := parseNoteMD(raw, noteParts[3], mt)
+		note, e := parseNoteMD(raw, noteParts[3], mt, vaultPassphrase)
 		if e != nil || !note.Public {
 			return nil
 		}
@@ -181,19 +185,20 @@ func collectPublicPosts(vaultBase string) ([]PublicPostItem, error) {
 	return out, nil
 }
 
-func loadPublicPostsCached(vaultBase string) ([]PublicPostItem, error) {
+func loadPublicPostsCached(vaultBase, vaultPassphrase string) ([]PublicPostItem, error) {
 	publicCacheMu.Lock()
 	defer publicCacheMu.Unlock()
-	if publicCacheVault == vaultBase && publicCachePosts != nil && time.Since(publicCacheAt) < publicCacheTTL {
+	key := publicPostsCacheKey(vaultBase, vaultPassphrase)
+	if publicCacheKey == key && publicCachePosts != nil && time.Since(publicCacheAt) < publicCacheTTL {
 		out := make([]PublicPostItem, len(publicCachePosts))
 		copy(out, publicCachePosts)
 		return out, nil
 	}
-	posts, err := collectPublicPosts(vaultBase)
+	posts, err := collectPublicPosts(vaultBase, vaultPassphrase)
 	if err != nil {
 		return nil, err
 	}
-	publicCacheVault = vaultBase
+	publicCacheKey = key
 	publicCacheAt = time.Now()
 	publicCachePosts = make([]PublicPostItem, len(posts))
 	copy(publicCachePosts, posts)
@@ -322,7 +327,7 @@ func isPublicImageExt(name string) bool {
 	}
 }
 
-func loadPublicPostDetail(vaultBase, provider, login, dirRel string) (PublicPostItem, error) {
+func loadPublicPostDetail(vaultBase, vaultPassphrase, provider, login, dirRel string) (PublicPostItem, error) {
 	provider = strings.TrimSpace(strings.ToLower(provider))
 	if provider != "github" && provider != "gitee" {
 		return PublicPostItem{}, os.ErrNotExist
@@ -348,7 +353,7 @@ func loadPublicPostDetail(vaultBase, provider, login, dirRel string) (PublicPost
 	if err != nil {
 		return PublicPostItem{}, err
 	}
-	note, err := parseNoteMD(raw, parts[3], info.ModTime())
+	note, err := parseNoteMD(raw, parts[3], info.ModTime(), vaultPassphrase)
 	if err != nil || !note.Public {
 		return PublicPostItem{}, os.ErrNotExist
 	}
@@ -366,7 +371,7 @@ func loadPublicPostDetail(vaultBase, provider, login, dirRel string) (PublicPost
 	}, nil
 }
 
-func registerPublicAPI(r *gin.Engine, vaultBase string) {
+func registerPublicAPI(r *gin.Engine, vaultBase string, vaultPassphrase string) {
 	r.GET("/api/public/posts", func(c *gin.Context) {
 		limit := publicListDefaultLimit
 		if ls := strings.TrimSpace(c.Query("limit")); ls != "" {
@@ -380,7 +385,7 @@ func registerPublicAPI(r *gin.Engine, vaultBase string) {
 		q := strings.TrimSpace(c.Query("q"))
 		cursor := strings.TrimSpace(c.Query("cursor"))
 
-		all, err := loadPublicPostsCached(vaultBase)
+		all, err := loadPublicPostsCached(vaultBase, vaultPassphrase)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -417,7 +422,7 @@ func registerPublicAPI(r *gin.Engine, vaultBase string) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "需要 query 参数: provider, login, dir"})
 			return
 		}
-		item, err := loadPublicPostDetail(vaultBase, provider, login, dir)
+		item, err := loadPublicPostDetail(vaultBase, vaultPassphrase, provider, login, dir)
 		if err != nil {
 			c.Status(http.StatusNotFound)
 			return
@@ -467,7 +472,7 @@ func registerPublicAPI(r *gin.Engine, vaultBase string) {
 			c.Status(http.StatusNotFound)
 			return
 		}
-		note, err := parseNoteMD(raw, parts[3], info.ModTime())
+		note, err := parseNoteMD(raw, parts[3], info.ModTime(), vaultPassphrase)
 		if err != nil || !note.Public {
 			c.Status(http.StatusNotFound)
 			return
@@ -495,6 +500,11 @@ func registerPublicAPI(r *gin.Engine, vaultBase string) {
 			return
 		}
 		data, err := os.ReadFile(absClean)
+		if err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		data, err = unwrapVaultBlob(data, vaultPassphrase)
 		if err != nil {
 			c.Status(http.StatusNotFound)
 			return

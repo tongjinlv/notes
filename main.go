@@ -110,7 +110,7 @@ func computeVaultRoot(dataFlag string) (vaultRoot string, legacyJSON string) {
 	return resolveVaultRootFlag(dataFlag), ""
 }
 
-func tryMigrateLegacy(vaultRoot, explicitLegacy string) {
+func tryMigrateLegacy(vaultRoot, explicitLegacy string, vaultPassphrase string) {
 	if vaultHasAnyNote(vaultRoot) {
 		return
 	}
@@ -128,7 +128,7 @@ func tryMigrateLegacy(vaultRoot, explicitLegacy string) {
 		if _, err := os.Stat(lp); err != nil {
 			continue
 		}
-		if err := migrateLegacyJSON(vaultRoot, lp); err != nil {
+		if err := migrateLegacyJSON(vaultRoot, lp, vaultPassphrase); err != nil {
 			log.Printf("迁移 %s 失败: %v", lp, err)
 			continue
 		}
@@ -207,6 +207,11 @@ func registerVaultAPI(g *gin.RouterGroup) {
 			c.Status(http.StatusNotFound)
 			return
 		}
+		data, err = unwrapVaultBlob(data, v.passphrase)
+		if err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
 		switch strings.ToLower(filepath.Ext(abs)) {
 		case ".md", ".markdown":
 			c.Data(http.StatusOK, "text/markdown; charset=utf-8", data)
@@ -252,7 +257,7 @@ func checkListenAddr(addr string) error {
 	return ln.Close()
 }
 
-func buildRouter(vaultBase string, webRoot fs.FS, auth *authBundle) http.Handler {
+func buildRouter(vaultBase string, webRoot fs.FS, auth *authBundle, vaultPassphrase string) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.MaxMultipartMemory = maxImageUpload
@@ -264,7 +269,7 @@ func buildRouter(vaultBase string, webRoot fs.FS, auth *authBundle) http.Handler
 		SkipPaths: []string{"/", "/styles.css", "/app.js", "/favicon.svg", "/favicon.ico", "/api/auth/status", "/auth/github/callback", "/auth/gitee/callback", "/vendor/easymde/easymde.min.css", "/vendor/easymde/easymde.min.js", "/public", "/public/", "/public.js", "/api/public/posts"},
 	}))
 
-	registerPublicAPI(r, vaultBase)
+	registerPublicAPI(r, vaultBase, vaultPassphrase)
 	registerPublicWeb(r, webRoot)
 
 	r.GET("/api/auth/status", handleAuthStatus(auth))
@@ -272,7 +277,7 @@ func buildRouter(vaultBase string, webRoot fs.FS, auth *authBundle) http.Handler
 	registerGiteeOAuthRoutes(r, auth.gitee)
 	registerLogoutRoute(r, auth)
 
-	api := r.Group("/api", requireOAuthReady(auth), requireAuthAndUserVault(vaultBase, auth))
+	api := r.Group("/api", requireOAuthReady(auth), requireAuthAndUserVault(vaultBase, auth, vaultPassphrase))
 	registerVaultAPI(api)
 
 	api.GET("/notes", func(c *gin.Context) {
@@ -386,11 +391,12 @@ func buildRouter(vaultBase string, webRoot fs.FS, auth *authBundle) http.Handler
 }
 
 type program struct {
-	addr      string
-	vaultBase string
-	web       fs.FS
-	auth      *authBundle
-	srv       *http.Server
+	addr              string
+	vaultBase         string
+	vaultPassphrase   string
+	web               fs.FS
+	auth              *authBundle
+	srv               *http.Server
 }
 
 func appLog(s service.Service) service.Logger {
@@ -435,7 +441,7 @@ func (consoleLogger) Errorf(format string, args ...interface{}) error {
 
 func (p *program) Start(s service.Service) error {
 	lg := appLog(s)
-	handler := buildRouter(p.vaultBase, p.web, p.auth)
+	handler := buildRouter(p.vaultBase, p.web, p.auth, p.vaultPassphrase)
 	p.srv = &http.Server{
 		Addr:    p.addr,
 		Handler: handler,
@@ -464,8 +470,8 @@ func (p *program) Stop(s service.Service) error {
 	return nil
 }
 
-func runHTTPServerForeground(addr string, vaultBase string, webRoot fs.FS, auth *authBundle) error {
-	handler := buildRouter(vaultBase, webRoot, auth)
+func runHTTPServerForeground(addr string, vaultBase string, webRoot fs.FS, auth *authBundle, vaultPassphrase string) error {
+	handler := buildRouter(vaultBase, webRoot, auth, vaultPassphrase)
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: handler,
@@ -545,6 +551,7 @@ func main() {
 	}
 
 	vaultBase, legacyJSON := computeVaultRoot(resolveDataPathForConfig(fileCfg.Data))
+	vaultPassphrase := vaultPassphraseFromEnvOrConfig(fileCfg)
 	if err := os.MkdirAll(vaultBase, 0o755); err != nil {
 		log.Fatalf("创建仓库根目录失败 %s: %v", vaultBase, err)
 	}
@@ -552,7 +559,7 @@ func main() {
 	if err := os.MkdirAll(usersDir, 0o755); err != nil {
 		log.Fatalf("创建 users 目录失败 %s: %v", usersDir, err)
 	}
-	tryMigrateLegacy(vaultBase, legacyJSON)
+	tryMigrateLegacy(vaultBase, legacyJSON, vaultPassphrase)
 	if vaultHasAnyNote(vaultBase) {
 		entries, rerr := os.ReadDir(usersDir)
 		if rerr == nil {
@@ -585,10 +592,11 @@ func main() {
 	}
 
 	prg := &program{
-		addr:      listenAddr,
-		vaultBase: vaultBase,
-		web:       webRoot,
-		auth:      auth,
+		addr:              listenAddr,
+		vaultBase:         vaultBase,
+		vaultPassphrase:   vaultPassphrase,
+		web:               webRoot,
+		auth:              auth,
 	}
 
 	if *svcFlag != "" {
@@ -604,6 +612,9 @@ func main() {
 
 	log.Printf("配置: %s", cfgFile)
 	log.Printf("Markdown 仓库根: %s/users/<provider>/<登录名>/（其下 YYYY/MM/DD/<id>/note.md）", vaultBase)
+	if vaultPassphrase != "" {
+		log.Println("笔记加密: 已启用（note.md 在磁盘上为密文；口令勿提交到 Git，可用环境变量 NOTES_VAULT_PASSPHRASE）")
+	}
 	if auth.github != nil && auth.github.enabled() {
 		log.Println("GitHub 登录已就绪（OAuth 应用的 callbackUrl 须与配置完全一致）")
 	}
@@ -623,7 +634,7 @@ func main() {
 		)
 	}
 	if service.Interactive() {
-		if err := runHTTPServerForeground(listenAddr, vaultBase, webRoot, auth); err != nil {
+		if err := runHTTPServerForeground(listenAddr, vaultBase, webRoot, auth, vaultPassphrase); err != nil {
 			log.Fatal(err)
 		}
 		return

@@ -79,7 +79,7 @@ func userVaultProvider(provider string) string {
 }
 
 // requireAuthAndUserVault 校验会话并在上下文中放入该用户专属的 *Vault（根目录为 <vaultBase>/users/<segment>/）。
-func requireAuthAndUserVault(vaultBase string, auth *authBundle) gin.HandlerFunc {
+func requireAuthAndUserVault(vaultBase string, auth *authBundle, vaultPassphrase string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if auth == nil || !auth.oauthReady() {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -108,7 +108,7 @@ func requireAuthAndUserVault(vaultBase string, auth *authBundle) gin.HandlerFunc
 			c.Abort()
 			return
 		}
-		c.Set(ctxUserVaultKey, NewVault(dir))
+		c.Set(ctxUserVaultKey, NewVault(dir, vaultPassphrase))
 		c.Next()
 	}
 }

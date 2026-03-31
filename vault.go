@@ -40,12 +40,13 @@ type legacyFile struct {
 }
 
 type Vault struct {
-	mu   sync.Mutex
-	root string
+	mu         sync.Mutex
+	root       string
+	passphrase string // 非空则 note.md 以 AES-GCM 密文存储；勿与仓库一起提交到 Git
 }
 
-func NewVault(root string) *Vault {
-	return &Vault{root: root}
+func NewVault(root, passphrase string) *Vault {
+	return &Vault{root: root, passphrase: passphrase}
 }
 
 var (
@@ -91,7 +92,11 @@ func splitFrontMatter(raw []byte) (front []byte, body []byte, hasFM bool) {
 	return front, body, true
 }
 
-func parseNoteMD(raw []byte, folderID string, modTime time.Time) (Note, error) {
+func parseNoteMD(raw []byte, folderID string, modTime time.Time, passphrase string) (Note, error) {
+	raw, err := unwrapVaultBlob(raw, passphrase)
+	if err != nil {
+		return Note{}, err
+	}
 	front, body, ok := splitFrontMatter(raw)
 	n := Note{Dir: ""}
 	if !ok {
@@ -268,9 +273,9 @@ func (v *Vault) listNotesRawUnlocked() ([]Note, error) {
 		if info != nil {
 			mt = info.ModTime()
 		}
-		note, e := parseNoteMD(raw, parts[3], mt)
+		note, e := parseNoteMD(raw, parts[3], mt, v.passphrase)
 		if e != nil {
-			return nil
+			return e
 		}
 		note.Dir = dirRel
 		notes = append(notes, note)
@@ -358,6 +363,10 @@ func (v *Vault) Create(title, body, beforeID string, public bool) (Note, error) 
 	if err != nil {
 		return Note{}, err
 	}
+	raw, err = wrapVaultBlob(raw, v.passphrase)
+	if err != nil {
+		return Note{}, err
+	}
 	if err := os.WriteFile(filepath.Join(full, "note.md"), raw, 0o644); err != nil {
 		return Note{}, err
 	}
@@ -381,6 +390,10 @@ func (v *Vault) Update(id, title, body string, public bool) (Note, error) {
 	t := time.Now()
 	n := Note{ID: id, Title: title, Body: body, UpdatedAt: t.UnixMilli(), Dir: dirRel, Public: public}
 	raw, err := composeNoteMD(n, t)
+	if err != nil {
+		return Note{}, err
+	}
+	raw, err = wrapVaultBlob(raw, v.passphrase)
 	if err != nil {
 		return Note{}, err
 	}
@@ -419,9 +432,9 @@ func (v *Vault) findDirByIDUnlocked(id string) (string, error) {
 		if info != nil {
 			mt = info.ModTime()
 		}
-		note, e := parseNoteMD(raw, parts[3], mt)
+		note, e := parseNoteMD(raw, parts[3], mt, v.passphrase)
 		if e != nil {
-			return nil
+			return e
 		}
 		if note.ID == id || parts[3] == id {
 			found = dirRel
@@ -465,7 +478,11 @@ func (v *Vault) SaveImage(noteID string, data []byte, ext string) (fileName stri
 	}
 	fileName = fmt.Sprintf("image-%d-%s%s", time.Now().UnixMilli(), hex.EncodeToString(b), ext)
 	full := filepath.Join(v.abs(dirRel), fileName)
-	if err := os.WriteFile(full, data, 0o644); err != nil {
+	out, err := wrapVaultBlob(data, v.passphrase)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(full, out, 0o644); err != nil {
 		return "", err
 	}
 	return fileName, nil
@@ -496,7 +513,7 @@ func (v *Vault) resolveVaultPath(rel string) (string, error) {
 	return absFull, nil
 }
 
-func migrateLegacyJSON(vaultRoot, jsonPath string) error {
+func migrateLegacyJSON(vaultRoot, jsonPath, passphrase string) error {
 	raw, err := os.ReadFile(jsonPath)
 	if err != nil {
 		return err
@@ -531,6 +548,10 @@ func migrateLegacyJSON(vaultRoot, jsonPath string) error {
 		}
 		n.Dir = dirRel
 		rawMD, err := composeNoteMD(Note{ID: n.ID, Title: n.Title, Body: n.Body}, t)
+		if err != nil {
+			return err
+		}
+		rawMD, err = wrapVaultBlob(rawMD, passphrase)
 		if err != nil {
 			return err
 		}
