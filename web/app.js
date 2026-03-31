@@ -42,7 +42,7 @@
   let hintTimer = null;
   /** @type {"edit" | "preview"} */
   let viewMode = "preview";
-  /** 当前笔记在仓库中的相对目录，如 2026/03/24/n_xxx，用于解析相对路径图片 */
+  /** 当前笔记在仓库中的相对目录，如 202603/n_xxx（兼容旧版 2026/03/n_xxx 与 2026/03/24/n_xxx） */
   let activeNoteDir = "";
   let searchListTimer = null;
   /** @type {Note[]} 当前列表展示的过滤结果（与虚拟列表同步） */

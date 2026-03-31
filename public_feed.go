@@ -96,7 +96,7 @@ func rewritePublicMarkdownImages(body, provider, login, dirRel string) string {
 	})
 }
 
-// parseUsersDirNotePath 解析 users 目录下相对路径（不含 note.md），得到 provider、磁盘上的 login 目录名、笔记四级目录。
+// parseUsersDirNotePath 解析 users 目录下相对路径（不含 note.md），得到 provider、磁盘上的 login 目录名、笔记目录。
 func parseUsersDirNotePath(dirRel string) (provider, login string, noteParts []string, ok bool) {
 	dirRel = filepath.ToSlash(dirRel)
 	parts := strings.Split(dirRel, "/")
@@ -109,6 +109,20 @@ func parseUsersDirNotePath(dirRel string) (provider, login string, noteParts []s
 	}
 	if len(parts) == 5 {
 		noteParts = parts[1:5]
+		if !isNoteLayoutDir(noteParts) {
+			return "", "", nil, false
+		}
+		return "github", parts[0], noteParts, true
+	}
+	if len(parts) == 4 && (parts[0] == "github" || parts[0] == "gitee") {
+		noteParts = parts[2:4]
+		if !isNoteLayoutDir(noteParts) {
+			return "", "", nil, false
+		}
+		return parts[0], parts[1], noteParts, true
+	}
+	if len(parts) == 3 {
+		noteParts = parts[1:3]
 		if !isNoteLayoutDir(noteParts) {
 			return "", "", nil, false
 		}
@@ -150,7 +164,7 @@ func collectPublicPosts(vaultBase string) ([]PublicPostItem, error) {
 		if info != nil {
 			mt = info.ModTime()
 		}
-		note, e := parseNoteMD(raw, noteParts[3], mt)
+		note, e := parseNoteMD(raw, noteLayoutLeafID(noteParts), mt)
 		if e != nil || !note.Public {
 			return nil
 		}
@@ -336,7 +350,7 @@ func loadPublicPostDetail(vaultBase, provider, login, dirRel string) (PublicPost
 		return PublicPostItem{}, os.ErrNotExist
 	}
 	parts := strings.Split(dirRel, "/")
-	if len(parts) != 4 || !isNoteLayoutDir(parts) {
+	if !isNoteLayoutDir(parts) {
 		return PublicPostItem{}, os.ErrNotExist
 	}
 	notePath := filepath.Join(vaultBase, "users", provider, login, filepath.FromSlash(dirRel), "note.md")
@@ -348,7 +362,7 @@ func loadPublicPostDetail(vaultBase, provider, login, dirRel string) (PublicPost
 	if err != nil {
 		return PublicPostItem{}, err
 	}
-	note, err := parseNoteMD(raw, parts[3], info.ModTime())
+	note, err := parseNoteMD(raw, noteLayoutLeafID(parts), info.ModTime())
 	if err != nil || !note.Public {
 		return PublicPostItem{}, os.ErrNotExist
 	}
@@ -447,15 +461,22 @@ func registerPublicAPI(r *gin.Engine, vaultBase string) {
 			return
 		}
 		parts := strings.Split(fp, "/")
-		if len(parts) < 4 {
+		var noteDir string
+		var noteLeafID string
+		switch {
+		case len(parts) >= 5 && isNoteLayoutDir(parts[:4]):
+			noteDir = strings.Join(parts[:4], "/")
+			noteLeafID = noteLayoutLeafID(parts[:4])
+		case len(parts) >= 4 && isNoteLayoutDir(parts[:3]):
+			noteDir = strings.Join(parts[:3], "/")
+			noteLeafID = noteLayoutLeafID(parts[:3])
+		case len(parts) >= 3 && isNoteLayoutDir(parts[:2]):
+			noteDir = strings.Join(parts[:2], "/")
+			noteLeafID = noteLayoutLeafID(parts[:2])
+		default:
 			c.Status(http.StatusNotFound)
 			return
 		}
-		if !isNoteLayoutDir(parts[:4]) {
-			c.Status(http.StatusNotFound)
-			return
-		}
-		noteDir := strings.Join(parts[:4], "/")
 		notePath := filepath.Join(vaultBase, "users", provider, login, filepath.FromSlash(noteDir), "note.md")
 		raw, err := os.ReadFile(notePath)
 		if err != nil {
@@ -467,7 +488,7 @@ func registerPublicAPI(r *gin.Engine, vaultBase string) {
 			c.Status(http.StatusNotFound)
 			return
 		}
-		note, err := parseNoteMD(raw, parts[3], info.ModTime())
+		note, err := parseNoteMD(raw, noteLeafID, info.ModTime())
 		if err != nil || !note.Public {
 			c.Status(http.StatusNotFound)
 			return

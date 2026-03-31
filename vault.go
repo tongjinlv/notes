@@ -18,7 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Note 与前端 JSON 对齐；Dir 为相对 vault 的路径，如 2026/03/24/n_xxx（正斜杠）
+// Note 与前端 JSON 对齐；Dir 为相对 vault 的路径，如 202603/n_xxx（正斜杠）。
 type Note struct {
 	ID         string `json:"id"`
 	Title      string `json:"title"`
@@ -52,6 +52,7 @@ var (
 	yearRe  = regexp.MustCompile(`^\d{4}$`)
 	monthRe = regexp.MustCompile(`^(0[1-9]|1[0-2])$`)
 	dayRe   = regexp.MustCompile(`^(0[1-9]|[12]\d|3[01])$`)
+	yearMonthCompactRe = regexp.MustCompile(`^(19|20)\d{2}(0[1-9]|1[0-2])$`)
 	noteFolderRe = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 )
 
@@ -148,13 +149,23 @@ func composeNoteMD(n Note, updated time.Time) ([]byte, error) {
 }
 
 func isNoteLayoutDir(parts []string) bool {
-	if len(parts) != 4 {
+	switch len(parts) {
+	case 2:
+		return yearMonthCompactRe.MatchString(parts[0]) && noteFolderRe.MatchString(parts[1])
+	case 3:
+		return yearRe.MatchString(parts[0]) && monthRe.MatchString(parts[1]) && noteFolderRe.MatchString(parts[2])
+	case 4:
+		return yearRe.MatchString(parts[0]) && monthRe.MatchString(parts[1]) && dayRe.MatchString(parts[2]) && noteFolderRe.MatchString(parts[3])
+	default:
 		return false
 	}
-	if !yearRe.MatchString(parts[0]) || !monthRe.MatchString(parts[1]) || !dayRe.MatchString(parts[2]) {
-		return false
+}
+
+func noteLayoutLeafID(parts []string) string {
+	if len(parts) == 0 {
+		return ""
 	}
-	return noteFolderRe.MatchString(parts[3])
+	return parts[len(parts)-1]
 }
 
 func (v *Vault) abs(rel string) string {
@@ -268,7 +279,7 @@ func (v *Vault) listNotesRawUnlocked() ([]Note, error) {
 		if info != nil {
 			mt = info.ModTime()
 		}
-		note, e := parseNoteMD(raw, parts[3], mt)
+		note, e := parseNoteMD(raw, noteLayoutLeafID(parts), mt)
 		if e != nil {
 			return nil
 		}
@@ -342,11 +353,9 @@ func (v *Vault) Create(title, body, beforeID string, public bool) (Note, error) 
 
 	id := newNoteID()
 	t := time.Now()
-	y, m, d := t.Date()
+	y, m, _ := t.Date()
 	dirRel := filepath.ToSlash(filepath.Join(
-		fmt.Sprintf("%04d", y),
-		fmt.Sprintf("%02d", int(m)),
-		fmt.Sprintf("%02d", d),
+		fmt.Sprintf("%04d%02d", y, int(m)),
 		id,
 	))
 	full := v.abs(dirRel)
@@ -419,11 +428,11 @@ func (v *Vault) findDirByIDUnlocked(id string) (string, error) {
 		if info != nil {
 			mt = info.ModTime()
 		}
-		note, e := parseNoteMD(raw, parts[3], mt)
+		note, e := parseNoteMD(raw, noteLayoutLeafID(parts), mt)
 		if e != nil {
 			return nil
 		}
-		if note.ID == id || parts[3] == id {
+		if note.ID == id || noteLayoutLeafID(parts) == id {
 			found = dirRel
 			return filepath.SkipAll
 		}
@@ -518,11 +527,9 @@ func migrateLegacyJSON(vaultRoot, jsonPath string) error {
 		if n.UpdatedAt == 0 {
 			t = time.Now()
 		}
-		y, m, d := t.Date()
+		y, m, _ := t.Date()
 		dirRel := filepath.ToSlash(filepath.Join(
-			fmt.Sprintf("%04d", y),
-			fmt.Sprintf("%02d", int(m)),
-			fmt.Sprintf("%02d", d),
+			fmt.Sprintf("%04d%02d", y, int(m)),
 			n.ID,
 		))
 		full := filepath.Join(vaultRoot, filepath.FromSlash(dirRel))

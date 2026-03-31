@@ -2,7 +2,7 @@
 
 # 本地网页笔记 · Local Notes
 
-轻量、单二进制的 **本地 Markdown 笔记** 应用：内置 Web UI，数据以 `YYYY/MM/DD/<笔记ID>/note.md` 目录结构存放在本机，支持图片粘贴与拖拽上传、明暗主题、侧栏搜索与自定义排序。
+轻量、单二进制的 **本地 Markdown 笔记** 应用：内置 Web UI，数据以 `YYYYMM/<笔记ID>/note.md` 目录结构存放在本机（例如 `202603/n_xxx`，兼容旧版 `YYYY/MM/<id>` 与 `YYYY/MM/DD/<id>`），支持图片粘贴与拖拽上传、明暗主题、侧栏搜索与自定义排序。
 
 **English:** A small self-hosted note app: single Go binary, embedded web UI, Markdown files on disk, image upload, dark/light theme.
 
@@ -60,12 +60,10 @@ Windows 下可使用仓库中的 `build.bat`：
 ```
 notes-vault/
 ├── .notes-sidebar-order.json   # 侧栏顺序（自动生成）
-└── 2026/
-    └── 03/
-        └── 24/
-            └── n_xxxxxxxx/
-                ├── note.md       # YAML 头 + Markdown 正文
-                └── image-*.png   # 附件图片（示例）
+└── 202603/
+    └── n_xxxxxxxx/
+        ├── note.md       # YAML 头 + Markdown 正文
+        └── image-*.png   # 附件图片（示例）
 ```
 
 ## HTTP API（摘要）

@@ -389,7 +389,8 @@
     if (path.startsWith("/public/post/")) {
       const rest = path.slice("/public/post/".length);
       const parts = rest.split("/").filter(Boolean);
-      if (parts.length >= 5) {
+      // 兼容目录：YYYYMM/id（4段）与旧版 YYYY/MM/id、YYYY/MM/DD/id
+      if (parts.length >= 4) {
         const provider = parts[0];
         const login = parts[1];
         const dir = parts.slice(2).join("/");
