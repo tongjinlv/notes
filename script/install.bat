@@ -1,2 +1,2 @@
 cd ..
-notes.exe -service install -svc-name LocalNotes
+.\notes.exe -service install -svc-name LocalNotes

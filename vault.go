@@ -18,19 +18,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Note 与前端 JSON 对齐；Dir 为相对 vault 的路径，如 2026/03/24/n_xxx（正斜杠）
+// Note 与前端 JSON 对齐；Dir 为相对 vault 的路径，如 202603/n_xxx（正斜杠）；仍兼容 2026/03/n_xxx、2026/03/24/n_xxx
 type Note struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	UpdatedAt int64  `json:"updatedAt"`
-	Dir       string `json:"dir"`
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+	UpdatedAt  int64  `json:"updatedAt"`
+	Dir        string `json:"dir"`
+	Public bool `json:"public"`
 }
 
 type noteFM struct {
-	ID      string `yaml:"id"`
-	Title   string `yaml:"title"`
+	ID         string `yaml:"id"`
+	Title      string `yaml:"title"`
 	Updated string `yaml:"updated"`
+	Public  bool   `yaml:"public"`
 }
 
 type legacyFile struct {
@@ -38,19 +40,22 @@ type legacyFile struct {
 }
 
 type Vault struct {
-	mu   sync.Mutex
-	root string
+	mu         sync.Mutex
+	root       string
+	passphrase string // 非空则 note.md 以 AES-GCM 密文存储；勿与仓库一起提交到 Git
 }
 
-func NewVault(root string) *Vault {
-	return &Vault{root: root}
+func NewVault(root, passphrase string) *Vault {
+	return &Vault{root: root, passphrase: passphrase}
 }
 
 var (
 	yearRe  = regexp.MustCompile(`^\d{4}$`)
 	monthRe = regexp.MustCompile(`^(0[1-9]|1[0-2])$`)
 	dayRe   = regexp.MustCompile(`^(0[1-9]|[12]\d|3[01])$`)
-	noteFolderRe = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+	// 紧凑年月目录，如 202603（YYYY + 两位月）
+	yearMonthCompactRe = regexp.MustCompile(`^(19|20)\d{2}(0[1-9]|1[0-2])$`)
+	noteFolderRe       = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 )
 
 func splitFrontMatter(raw []byte) (front []byte, body []byte, hasFM bool) {
@@ -89,7 +94,11 @@ func splitFrontMatter(raw []byte) (front []byte, body []byte, hasFM bool) {
 	return front, body, true
 }
 
-func parseNoteMD(raw []byte, folderID string, modTime time.Time) (Note, error) {
+func parseNoteMD(raw []byte, folderID string, modTime time.Time, passphrase string) (Note, error) {
+	raw, err := unwrapVaultBlob(raw, passphrase)
+	if err != nil {
+		return Note{}, err
+	}
 	front, body, ok := splitFrontMatter(raw)
 	n := Note{Dir: ""}
 	if !ok {
@@ -118,6 +127,7 @@ func parseNoteMD(raw []byte, folderID string, modTime time.Time) (Note, error) {
 	} else {
 		n.UpdatedAt = modTime.UnixMilli()
 	}
+	n.Public = fm.Public
 	n.Body = string(body)
 	return n, nil
 }
@@ -127,6 +137,7 @@ func composeNoteMD(n Note, updated time.Time) ([]byte, error) {
 		ID:      n.ID,
 		Title:   n.Title,
 		Updated: updated.UTC().Format(time.RFC3339),
+		Public:  n.Public,
 	}
 	head, err := yaml.Marshal(fm)
 	if err != nil {
@@ -143,14 +154,25 @@ func composeNoteMD(n Note, updated time.Time) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+// isNoteLayoutDir 识别 YYYYMM/<id>、YYYY/MM/<id>、YYYY/MM/DD/<id>。
 func isNoteLayoutDir(parts []string) bool {
-	if len(parts) != 4 {
+	switch len(parts) {
+	case 2:
+		return yearMonthCompactRe.MatchString(parts[0]) && noteFolderRe.MatchString(parts[1])
+	case 3:
+		return yearRe.MatchString(parts[0]) && monthRe.MatchString(parts[1]) && noteFolderRe.MatchString(parts[2])
+	case 4:
+		return yearRe.MatchString(parts[0]) && monthRe.MatchString(parts[1]) && dayRe.MatchString(parts[2]) && noteFolderRe.MatchString(parts[3])
+	default:
 		return false
 	}
-	if !yearRe.MatchString(parts[0]) || !monthRe.MatchString(parts[1]) || !dayRe.MatchString(parts[2]) {
-		return false
+}
+
+func noteLayoutLeafID(parts []string) string {
+	if len(parts) == 0 {
+		return ""
 	}
-	return noteFolderRe.MatchString(parts[3])
+	return parts[len(parts)-1]
 }
 
 func (v *Vault) abs(rel string) string {
@@ -264,9 +286,9 @@ func (v *Vault) listNotesRawUnlocked() ([]Note, error) {
 		if info != nil {
 			mt = info.ModTime()
 		}
-		note, e := parseNoteMD(raw, parts[3], mt)
+		note, e := parseNoteMD(raw, noteLayoutLeafID(parts), mt, v.passphrase)
 		if e != nil {
-			return nil
+			return e
 		}
 		note.Dir = dirRel
 		notes = append(notes, note)
@@ -332,25 +354,25 @@ func (v *Vault) List() ([]Note, error) {
 	return v.applySidebarOrderUnlocked(notes, order), nil
 }
 
-func (v *Vault) Create(title, body, beforeID string) (Note, error) {
+func (v *Vault) Create(title, body, beforeID string, public bool) (Note, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
 	id := newNoteID()
 	t := time.Now()
-	y, m, d := t.Date()
-	dirRel := filepath.ToSlash(filepath.Join(
-		fmt.Sprintf("%04d", y),
-		fmt.Sprintf("%02d", int(m)),
-		fmt.Sprintf("%02d", d),
-		id,
-	))
+	y, m, _ := t.Date()
+	ym := fmt.Sprintf("%04d%02d", y, int(m))
+	dirRel := filepath.ToSlash(filepath.Join(ym, id))
 	full := v.abs(dirRel)
 	if err := os.MkdirAll(full, 0o755); err != nil {
 		return Note{}, err
 	}
-	n := Note{ID: id, Title: title, Body: body, UpdatedAt: t.UnixMilli(), Dir: dirRel}
+	n := Note{ID: id, Title: title, Body: body, UpdatedAt: t.UnixMilli(), Dir: dirRel, Public: public}
 	raw, err := composeNoteMD(n, t)
+	if err != nil {
+		return Note{}, err
+	}
+	raw, err = wrapVaultBlob(raw, v.passphrase)
 	if err != nil {
 		return Note{}, err
 	}
@@ -362,10 +384,11 @@ func (v *Vault) Create(title, body, beforeID string) (Note, error) {
 		before = ""
 	}
 	v.sidebarInsertUnlocked(id, before)
+	invalidatePublicPostCache()
 	return n, nil
 }
 
-func (v *Vault) Update(id, title, body string) (Note, error) {
+func (v *Vault) Update(id, title, body string, public bool) (Note, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -374,8 +397,12 @@ func (v *Vault) Update(id, title, body string) (Note, error) {
 		return Note{}, err
 	}
 	t := time.Now()
-	n := Note{ID: id, Title: title, Body: body, UpdatedAt: t.UnixMilli(), Dir: dirRel}
+	n := Note{ID: id, Title: title, Body: body, UpdatedAt: t.UnixMilli(), Dir: dirRel, Public: public}
 	raw, err := composeNoteMD(n, t)
+	if err != nil {
+		return Note{}, err
+	}
+	raw, err = wrapVaultBlob(raw, v.passphrase)
 	if err != nil {
 		return Note{}, err
 	}
@@ -383,6 +410,7 @@ func (v *Vault) Update(id, title, body string) (Note, error) {
 	if err := os.WriteFile(full, raw, 0o644); err != nil {
 		return Note{}, err
 	}
+	invalidatePublicPostCache()
 	return n, nil
 }
 
@@ -413,11 +441,11 @@ func (v *Vault) findDirByIDUnlocked(id string) (string, error) {
 		if info != nil {
 			mt = info.ModTime()
 		}
-		note, e := parseNoteMD(raw, parts[3], mt)
+		note, e := parseNoteMD(raw, noteLayoutLeafID(parts), mt, v.passphrase)
 		if e != nil {
-			return nil
+			return e
 		}
-		if note.ID == id || parts[3] == id {
+		if note.ID == id || noteLayoutLeafID(parts) == id {
 			found = dirRel
 			return filepath.SkipAll
 		}
@@ -441,6 +469,7 @@ func (v *Vault) Delete(id string) error {
 		return err
 	}
 	v.sidebarRemoveUnlocked(id)
+	invalidatePublicPostCache()
 	return nil
 }
 
@@ -458,7 +487,11 @@ func (v *Vault) SaveImage(noteID string, data []byte, ext string) (fileName stri
 	}
 	fileName = fmt.Sprintf("image-%d-%s%s", time.Now().UnixMilli(), hex.EncodeToString(b), ext)
 	full := filepath.Join(v.abs(dirRel), fileName)
-	if err := os.WriteFile(full, data, 0o644); err != nil {
+	out, err := wrapVaultBlob(data, v.passphrase)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(full, out, 0o644); err != nil {
 		return "", err
 	}
 	return fileName, nil
@@ -489,7 +522,7 @@ func (v *Vault) resolveVaultPath(rel string) (string, error) {
 	return absFull, nil
 }
 
-func migrateLegacyJSON(vaultRoot, jsonPath string) error {
+func migrateLegacyJSON(vaultRoot, jsonPath, passphrase string) error {
 	raw, err := os.ReadFile(jsonPath)
 	if err != nil {
 		return err
@@ -511,19 +544,19 @@ func migrateLegacyJSON(vaultRoot, jsonPath string) error {
 		if n.UpdatedAt == 0 {
 			t = time.Now()
 		}
-		y, m, d := t.Date()
-		dirRel := filepath.ToSlash(filepath.Join(
-			fmt.Sprintf("%04d", y),
-			fmt.Sprintf("%02d", int(m)),
-			fmt.Sprintf("%02d", d),
-			n.ID,
-		))
+		y, m, _ := t.Date()
+		ym := fmt.Sprintf("%04d%02d", y, int(m))
+		dirRel := filepath.ToSlash(filepath.Join(ym, n.ID))
 		full := filepath.Join(vaultRoot, filepath.FromSlash(dirRel))
 		if err := os.MkdirAll(full, 0o755); err != nil {
 			return err
 		}
 		n.Dir = dirRel
 		rawMD, err := composeNoteMD(Note{ID: n.ID, Title: n.Title, Body: n.Body}, t)
+		if err != nil {
+			return err
+		}
+		rawMD, err = wrapVaultBlob(rawMD, passphrase)
 		if err != nil {
 			return err
 		}

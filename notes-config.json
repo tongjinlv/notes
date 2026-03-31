@@ -1,10 +1,18 @@
 {
   "listen": "127.0.0.1:8787",
   "data": "",
+  "vaultPassphrase": "1234567890",
   "githubOAuth": {
     "clientId": "Ov23liDDpScBSVFjWB0W",
     "clientSecret": "6db1123898e0defba1242965e1af73d03d925662",
     "callbackUrl": "http://127.0.0.1:8787/auth/github/callback",
+    "cookieSecret": "Zq8kP2vN9xR4mL7wY1cH5jF3bT0sA6eU8iO2qW4gM9nB3vK7",
+    "allowedLogins": []
+  },
+  "giteeOAuth": {
+    "clientId": "569458afbbab4253964d78f54eb3ab806d4f4c1ae06d07d7da36f1f824372cb4",
+    "clientSecret": "6c43c215cde5ce776d8fc7fba4a78729612f7d45ae93abfe6c10fc67ff78d965",
+    "callbackUrl": "http://127.0.0.1:8787/auth/gitee/callback",
     "cookieSecret": "Zq8kP2vN9xR4mL7wY1cH5jF3bT0sA6eU8iO2qW4gM9nB3vK7",
     "allowedLogins": []
   }

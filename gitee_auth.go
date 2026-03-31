@@ -2,39 +2,29 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-const (
-	sessionCookieName  = "notes_session"
-	oauthStateCookie   = "notes_oauth_state"
-	oauthPopupCookie   = "notes_oauth_popup"
-	sessionMaxAge      = 7 * 24 * 3600
-	oauthStartNotReady = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>尚未配置 OAuth</title></head><body style="font-family:system-ui,sans-serif;padding:1.5rem;line-height:1.6;max-width:28rem">
-<p>服务器尚未配置 GitHub OAuth。</p>
-<p>请在 <code>notes-config.json</code> 中填写 <code>githubOAuth</code>（clientId、clientSecret、callbackUrl、cookieSecret），保存后<strong>重启本程序</strong>。</p>
+const oauthGiteeStartNotReady = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>尚未配置 OAuth</title></head><body style="font-family:system-ui,sans-serif;padding:1.5rem;line-height:1.6;max-width:28rem">
+<p>服务器尚未配置 Gitee OAuth。</p>
+<p>请在 <code>notes-config.json</code> 中填写 <code>giteeOAuth</code>（clientId、clientSecret、callbackUrl、cookieSecret），保存后<strong>重启本程序</strong>。</p>
 <p><a href="/">返回笔记</a></p>
 </body></html>`
-)
 
-type githubAuth struct {
-	cfg GitHubOAuthConfig
+type giteeAuth struct {
+	cfg GiteeOAuthConfig
 }
 
-func (a *githubAuth) enabled() bool {
+func (a *giteeAuth) enabled() bool {
 	if a == nil {
 		return false
 	}
@@ -45,16 +35,9 @@ func (a *githubAuth) enabled() bool {
 		len(strings.TrimSpace(c.CookieSecret)) >= 16
 }
 
-func envOr(s, envKey string) string {
-	if strings.TrimSpace(s) != "" {
-		return strings.TrimSpace(s)
-	}
-	return strings.TrimSpace(os.Getenv(envKey))
-}
-
-func normalizeGitHubOAuth(c GitHubOAuthConfig) GitHubOAuthConfig {
+func normalizeGiteeOAuth(c GiteeOAuthConfig) GiteeOAuthConfig {
 	c.ClientID = strings.TrimSpace(c.ClientID)
-	c.ClientSecret = envOr(c.ClientSecret, "NOTES_GITHUB_CLIENT_SECRET")
+	c.ClientSecret = envOr(c.ClientSecret, "NOTES_GITEE_CLIENT_SECRET")
 	c.CallbackURL = strings.TrimSpace(c.CallbackURL)
 	c.CookieSecret = envOr(c.CookieSecret, "NOTES_AUTH_COOKIE_SECRET")
 	var allow []string
@@ -68,7 +51,7 @@ func normalizeGitHubOAuth(c GitHubOAuthConfig) GitHubOAuthConfig {
 	return c
 }
 
-func validateGitHubOAuth(c GitHubOAuthConfig) error {
+func validateGiteeOAuth(c GiteeOAuthConfig) error {
 	if c.ClientID == "" || c.ClientSecret == "" || c.CallbackURL == "" {
 		return fmt.Errorf("需要 clientId、clientSecret、callbackUrl")
 	}
@@ -81,67 +64,16 @@ func validateGitHubOAuth(c GitHubOAuthConfig) error {
 	return nil
 }
 
-type sessionPayload struct {
-	ID        int64  `json:"id"`
-	Provider  string `json:"provider,omitempty"`
-	Login     string `json:"login"`
-	Name      string `json:"name"`
-	AvatarURL string `json:"avatarUrl"`
-	Exp       int64  `json:"exp"`
-}
-
-func (a *githubAuth) signSession(p sessionPayload) (string, error) {
+func (a *giteeAuth) signSession(p sessionPayload) (string, error) {
 	return signOAuthSession(p, a.cfg.CookieSecret)
 }
 
-func randomState() string {
-	b := make([]byte, 24)
-	if _, err := rand.Read(b); err != nil {
-		return strconv.FormatInt(time.Now().UnixNano(), 36)
-	}
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-func readOAuthWantsPopup(c *gin.Context) bool {
-	pc, err := c.Request.Cookie(oauthPopupCookie)
-	return err == nil && pc.Value == "1"
-}
-
-func clearOAuthPopupCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: oauthPopupCookie, Value: "", Path: "/", MaxAge: -1})
-}
-
-func htmlOAuthPopupResult(ok bool) string {
-	if ok {
-		return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>登录成功</title></head><body><script>
-(function(){
-  try {
-    if (window.opener) {
-      window.opener.postMessage({ type: "notes-oauth", ok: true }, location.origin);
-    }
-  } catch (e) {}
-  window.close();
-})();
-</script><p>登录成功，窗口将自动关闭。</p></body></html>`
-	}
-	return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>登录失败</title></head><body><script>
-(function(){
-  try {
-    if (window.opener) {
-      window.opener.postMessage({ type: "notes-oauth", ok: false }, location.origin);
-    }
-  } catch (e) {}
-  window.close();
-})();
-</script><p>登录未完成，请关闭窗口后重试。</p></body></html>`
-}
-
-// registerGitHubOAuthRoutes 始终注册 /auth/github/start（未配置时返回说明页）；OAuth 就绪时注册 callback。
-func registerGitHubOAuthRoutes(r gin.IRoutes, gh *githubAuth) {
-	r.GET("/auth/github/start", func(c *gin.Context) {
-		if gh == nil || !gh.enabled() {
+// registerGiteeOAuthRoutes 注册 /auth/gitee/start；Gitee 配置就绪时注册 callback。
+func registerGiteeOAuthRoutes(r gin.IRoutes, g *giteeAuth) {
+	r.GET("/auth/gitee/start", func(c *gin.Context) {
+		if g == nil || !g.enabled() {
 			c.Header("Content-Type", "text/html; charset=utf-8")
-			c.String(http.StatusOK, oauthStartNotReady)
+			c.String(http.StatusOK, oauthGiteeStartNotReady)
 			return
 		}
 		popup := strings.TrimSpace(c.Query("popup")) == "1"
@@ -168,19 +100,20 @@ func registerGitHubOAuthRoutes(r gin.IRoutes, gh *githubAuth) {
 			SameSite: http.SameSiteLaxMode,
 		})
 		q := url.Values{}
-		q.Set("client_id", gh.cfg.ClientID)
-		q.Set("redirect_uri", gh.cfg.CallbackURL)
-		q.Set("scope", "read:user user:email")
+		q.Set("client_id", g.cfg.ClientID)
+		q.Set("redirect_uri", g.cfg.CallbackURL)
+		q.Set("response_type", "code")
+		q.Set("scope", "user_info")
 		q.Set("state", st)
-		c.Redirect(http.StatusFound, "https://github.com/login/oauth/authorize?"+q.Encode())
+		c.Redirect(http.StatusFound, "https://gitee.com/oauth/authorize?"+q.Encode())
 	})
 
-	if gh == nil || !gh.enabled() {
+	if g == nil || !g.enabled() {
 		return
 	}
-	a := gh
+	a := g
 
-	r.GET("/auth/github/callback", func(c *gin.Context) {
+	r.GET("/auth/gitee/callback", func(c *gin.Context) {
 		wantPopup := readOAuthWantsPopup(c)
 		fail := func(code int, plain string) {
 			clearOAuthPopupCookie(c.Writer)
@@ -193,7 +126,7 @@ func registerGitHubOAuthRoutes(r gin.IRoutes, gh *githubAuth) {
 		}
 
 		if c.Query("error") != "" {
-			fail(http.StatusBadRequest, "GitHub 授权被拒绝或失败")
+			fail(http.StatusBadRequest, "Gitee 授权被拒绝或失败")
 			return
 		}
 		code := strings.TrimSpace(c.Query("code"))
@@ -214,9 +147,9 @@ func registerGitHubOAuthRoutes(r gin.IRoutes, gh *githubAuth) {
 			fail(http.StatusBadGateway, "换取 token 失败")
 			return
 		}
-		u, err := a.fetchGitHubUser(c.Request.Context(), token)
+		u, err := a.fetchGiteeUser(c.Request.Context(), token)
 		if err != nil {
-			fail(http.StatusBadGateway, "读取 GitHub 用户失败")
+			fail(http.StatusBadGateway, "读取 Gitee 用户失败")
 			return
 		}
 		loginLower := strings.ToLower(strings.TrimSpace(u.Login))
@@ -229,14 +162,14 @@ func registerGitHubOAuthRoutes(r gin.IRoutes, gh *githubAuth) {
 				}
 			}
 			if !ok {
-				fail(http.StatusForbidden, "当前 GitHub 账号不在允许列表中")
+				fail(http.StatusForbidden, "当前 Gitee 账号不在允许列表中")
 				return
 			}
 		}
 
 		sess := sessionPayload{
 			ID:        u.ID,
-			Provider:  "github",
+			Provider:  "gitee",
 			Login:     u.Login,
 			Name:      u.Name,
 			AvatarURL: u.AvatarURL,
@@ -265,14 +198,15 @@ func registerGitHubOAuthRoutes(r gin.IRoutes, gh *githubAuth) {
 	})
 }
 
-func (a *githubAuth) exchangeCode(ctx context.Context, code string) (string, error) {
+func (a *giteeAuth) exchangeCode(ctx context.Context, code string) (string, error) {
 	form := url.Values{}
-	form.Set("client_id", a.cfg.ClientID)
-	form.Set("client_secret", a.cfg.ClientSecret)
+	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
+	form.Set("client_id", a.cfg.ClientID)
 	form.Set("redirect_uri", a.cfg.CallbackURL)
+	form.Set("client_secret", a.cfg.ClientSecret)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://github.com/login/oauth/access_token", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://gitee.com/oauth/token", strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err
 	}
@@ -300,20 +234,19 @@ func (a *githubAuth) exchangeCode(ctx context.Context, code string) (string, err
 	return out.AccessToken, nil
 }
 
-type ghUser struct {
-	ID        int64  `json:"id"`
-	Login     string `json:"login"`
-	Name      string `json:"name"`
-	AvatarURL string `json:"avatar_url"`
-}
-
-func (a *githubAuth) fetchGitHubUser(ctx context.Context, token string) (*ghUser, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user", nil)
+func (a *giteeAuth) fetchGiteeUser(ctx context.Context, token string) (*ghUser, error) {
+	u, err := url.Parse("https://gitee.com/api/v5/user")
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/vnd.github+json")
+	q := u.Query()
+	q.Set("access_token", token)
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -321,12 +254,11 @@ func (a *githubAuth) fetchGitHubUser(ctx context.Context, token string) (*ghUser
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github api %d", resp.StatusCode)
+		return nil, fmt.Errorf("gitee api %d", resp.StatusCode)
 	}
-	var u ghUser
-	if err := json.Unmarshal(body, &u); err != nil {
+	var user ghUser
+	if err := json.Unmarshal(body, &user); err != nil {
 		return nil, err
 	}
-	return &u, nil
+	return &user, nil
 }
-

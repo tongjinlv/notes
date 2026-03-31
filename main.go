@@ -110,7 +110,7 @@ func computeVaultRoot(dataFlag string) (vaultRoot string, legacyJSON string) {
 	return resolveVaultRootFlag(dataFlag), ""
 }
 
-func tryMigrateLegacy(vaultRoot, explicitLegacy string) {
+func tryMigrateLegacy(vaultRoot, explicitLegacy string, vaultPassphrase string) {
 	if vaultHasAnyNote(vaultRoot) {
 		return
 	}
@@ -128,7 +128,7 @@ func tryMigrateLegacy(vaultRoot, explicitLegacy string) {
 		if _, err := os.Stat(lp); err != nil {
 			continue
 		}
-		if err := migrateLegacyJSON(vaultRoot, lp); err != nil {
+		if err := migrateLegacyJSON(vaultRoot, lp, vaultPassphrase); err != nil {
 			log.Printf("迁移 %s 失败: %v", lp, err)
 			continue
 		}
@@ -207,6 +207,11 @@ func registerVaultAPI(g *gin.RouterGroup) {
 			c.Status(http.StatusNotFound)
 			return
 		}
+		data, err = unwrapVaultBlob(data, v.passphrase)
+		if err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
 		switch strings.ToLower(filepath.Ext(abs)) {
 		case ".md", ".markdown":
 			c.Data(http.StatusOK, "text/markdown; charset=utf-8", data)
@@ -252,7 +257,7 @@ func checkListenAddr(addr string) error {
 	return ln.Close()
 }
 
-func buildRouter(vaultBase string, webRoot fs.FS, gh *githubAuth) http.Handler {
+func buildRouter(vaultBase string, webRoot fs.FS, auth *authBundle, vaultPassphrase string) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.MaxMultipartMemory = maxImageUpload
@@ -261,13 +266,18 @@ func buildRouter(vaultBase string, webRoot fs.FS, gh *githubAuth) http.Handler {
 	r.HandleMethodNotAllowed = false
 	r.Use(gin.Recovery())
 	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{
-		SkipPaths: []string{"/", "/styles.css", "/app.js", "/favicon.svg", "/favicon.ico", "/api/auth/status", "/auth/github/callback"},
+		SkipPaths: []string{"/", "/styles.css", "/app.js", "/favicon.svg", "/favicon.ico", "/api/auth/status", "/auth/github/callback", "/auth/gitee/callback", "/vendor/easymde/easymde.min.css", "/vendor/easymde/easymde.min.js", "/public", "/public/", "/public.js", "/api/public/posts"},
 	}))
 
-	r.GET("/api/auth/status", handleAuthStatus(gh))
-	registerAuthRoutes(r, gh)
+	registerPublicAPI(r, vaultBase, vaultPassphrase)
+	registerPublicWeb(r, webRoot)
 
-	api := r.Group("/api", requireGitHubOAuthReady(gh), requireAuthAndUserVault(vaultBase, gh))
+	r.GET("/api/auth/status", handleAuthStatus(auth))
+	registerGitHubOAuthRoutes(r, auth.github)
+	registerGiteeOAuthRoutes(r, auth.gitee)
+	registerLogoutRoute(r, auth)
+
+	api := r.Group("/api", requireOAuthReady(auth), requireAuthAndUserVault(vaultBase, auth, vaultPassphrase))
 	registerVaultAPI(api)
 
 	api.GET("/notes", func(c *gin.Context) {
@@ -284,13 +294,14 @@ func buildRouter(vaultBase string, webRoot fs.FS, gh *githubAuth) http.Handler {
 		Title    string `json:"title"`
 		Body     string `json:"body"`
 		BeforeID string `json:"beforeId"`
+		Public   bool   `json:"public"`
 	}
 
 	api.POST("/notes", func(c *gin.Context) {
 		v := mustCtxVault(c)
 		var wb writeBody
 		_ = c.ShouldBindJSON(&wb)
-		n, err := v.Create(wb.Title, wb.Body, wb.BeforeID)
+		n, err := v.Create(wb.Title, wb.Body, wb.BeforeID, wb.Public)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -306,7 +317,7 @@ func buildRouter(vaultBase string, webRoot fs.FS, gh *githubAuth) http.Handler {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
 			return
 		}
-		n, err := v.Update(id, wb.Title, wb.Body)
+		n, err := v.Update(id, wb.Title, wb.Body, wb.Public)
 		if err != nil {
 			if err == os.ErrNotExist {
 				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
@@ -356,6 +367,9 @@ func buildRouter(vaultBase string, webRoot fs.FS, gh *githubAuth) http.Handler {
 		}
 		c.Data(http.StatusOK, "application/javascript; charset=utf-8", b)
 	})
+	if vendorFS, err := fs.Sub(webRoot, "vendor"); err == nil {
+		r.StaticFS("/vendor", http.FS(vendorFS))
+	}
 	serveFavicon := func(c *gin.Context) {
 		if len(faviconSVG) == 0 {
 			b, err := fs.ReadFile(webRoot, "favicon.svg")
@@ -377,11 +391,12 @@ func buildRouter(vaultBase string, webRoot fs.FS, gh *githubAuth) http.Handler {
 }
 
 type program struct {
-	addr      string
-	vaultBase string
-	web       fs.FS
-	github    *githubAuth
-	srv       *http.Server
+	addr              string
+	vaultBase         string
+	vaultPassphrase   string
+	web               fs.FS
+	auth              *authBundle
+	srv               *http.Server
 }
 
 func appLog(s service.Service) service.Logger {
@@ -426,7 +441,7 @@ func (consoleLogger) Errorf(format string, args ...interface{}) error {
 
 func (p *program) Start(s service.Service) error {
 	lg := appLog(s)
-	handler := buildRouter(p.vaultBase, p.web, p.github)
+	handler := buildRouter(p.vaultBase, p.web, p.auth, p.vaultPassphrase)
 	p.srv = &http.Server{
 		Addr:    p.addr,
 		Handler: handler,
@@ -455,8 +470,8 @@ func (p *program) Stop(s service.Service) error {
 	return nil
 }
 
-func runHTTPServerForeground(addr string, vaultBase string, webRoot fs.FS, gh *githubAuth) error {
-	handler := buildRouter(vaultBase, webRoot, gh)
+func runHTTPServerForeground(addr string, vaultBase string, webRoot fs.FS, auth *authBundle, vaultPassphrase string) error {
+	handler := buildRouter(vaultBase, webRoot, auth, vaultPassphrase)
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: handler,
@@ -515,10 +530,28 @@ func main() {
 			gh = &githubAuth{cfg: gc}
 		}
 	} else {
-		log.Printf("提示: 未配置 githubOAuth，服务已启动；在 notes-config.json 中填写并重启后即可 GitHub 登录。")
+		log.Printf("提示: 未配置 githubOAuth。")
+	}
+
+	var gitee *giteeAuth
+	if fileCfg.GiteeOAuth != nil {
+		gc := normalizeGiteeOAuth(*fileCfg.GiteeOAuth)
+		if err := validateGiteeOAuth(gc); err != nil {
+			log.Printf("提示: giteeOAuth 未填全或无效，服务已启动但无法登录（%v）", err)
+		} else {
+			gitee = &giteeAuth{cfg: gc}
+		}
+	} else {
+		log.Printf("提示: 未配置 giteeOAuth。")
+	}
+
+	auth := &authBundle{github: gh, gitee: gitee}
+	if !auth.oauthReady() {
+		log.Printf("提示: 未配置有效的 githubOAuth 或 giteeOAuth，服务已启动；在 notes-config.json 中填写并重启后即可登录。")
 	}
 
 	vaultBase, legacyJSON := computeVaultRoot(resolveDataPathForConfig(fileCfg.Data))
+	vaultPassphrase := vaultPassphraseFromEnvOrConfig(fileCfg)
 	if err := os.MkdirAll(vaultBase, 0o755); err != nil {
 		log.Fatalf("创建仓库根目录失败 %s: %v", vaultBase, err)
 	}
@@ -526,7 +559,7 @@ func main() {
 	if err := os.MkdirAll(usersDir, 0o755); err != nil {
 		log.Fatalf("创建 users 目录失败 %s: %v", usersDir, err)
 	}
-	tryMigrateLegacy(vaultBase, legacyJSON)
+	tryMigrateLegacy(vaultBase, legacyJSON, vaultPassphrase)
 	if vaultHasAnyNote(vaultBase) {
 		entries, rerr := os.ReadDir(usersDir)
 		if rerr == nil {
@@ -541,7 +574,7 @@ func main() {
 				}
 			}
 			if !hasUserNotes {
-				log.Printf("提示: 在 %s 根下检测到旧版笔记数据；多用户模式下笔记应在 users/<GitHub登录>/ 下，请自行迁移或备份后移动目录。", vaultBase)
+				log.Printf("提示: 在 %s 根下检测到旧版笔记数据；多用户模式下笔记应在 users/<provider>/<登录名>/ 下，请自行迁移或备份后移动目录。", vaultBase)
 			}
 		}
 	}
@@ -559,10 +592,11 @@ func main() {
 	}
 
 	prg := &program{
-		addr:      listenAddr,
-		vaultBase: vaultBase,
-		web:       webRoot,
-		github:    gh,
+		addr:              listenAddr,
+		vaultBase:         vaultBase,
+		vaultPassphrase:   vaultPassphrase,
+		web:               webRoot,
+		auth:              auth,
 	}
 
 	if *svcFlag != "" {
@@ -577,9 +611,15 @@ func main() {
 	}
 
 	log.Printf("配置: %s", cfgFile)
-	log.Printf("Markdown 仓库根: %s/users/<GitHub登录>/（其下 YYYY/MM/DD/<id>/note.md）", vaultBase)
-	if gh != nil {
-		log.Println("GitHub 登录已就绪（OAuth App 的 callbackUrl 须与配置完全一致）")
+	log.Printf("Markdown 仓库根: %s/users/<provider>/<登录名>/（其下 YYYYMM/<id>/note.md，如 202603/n_xxx；仍兼容 YYYY/MM/<id>、YYYY/MM/DD/<id>）", vaultBase)
+	if vaultPassphrase != "" {
+		log.Println("笔记加密: 已启用（note.md 在磁盘上为密文；口令勿提交到 Git，可用环境变量 NOTES_VAULT_PASSPHRASE）")
+	}
+	if auth.github != nil && auth.github.enabled() {
+		log.Println("GitHub 登录已就绪（OAuth 应用的 callbackUrl 须与配置完全一致）")
+	}
+	if auth.gitee != nil && auth.gitee.enabled() {
+		log.Println("Gitee 登录已就绪（第三方应用的回调地址须与配置完全一致）")
 	}
 	log.Printf("监听: %s | 在浏览器打开: %s", listenAddr, browserOpenURL(listenAddr))
 	if bindsBroad(listenAddr) {
@@ -594,7 +634,7 @@ func main() {
 		)
 	}
 	if service.Interactive() {
-		if err := runHTTPServerForeground(listenAddr, vaultBase, webRoot, gh); err != nil {
+		if err := runHTTPServerForeground(listenAddr, vaultBase, webRoot, auth, vaultPassphrase); err != nil {
 			log.Fatal(err)
 		}
 		return

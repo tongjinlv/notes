@@ -7,6 +7,7 @@
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
   <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="stylesheet" href="/vendor/easymde/easymde.min.css" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -14,7 +15,16 @@
     <aside class="sidebar" id="sidebar" aria-label="笔记列表">
       <header class="sidebar-header">
         <h1 class="logo">
-          <img class="logo-icon" src="/favicon.svg" width="28" height="28" alt="" decoding="async" />
+          <a
+            href="/public"
+            class="logo-public-link"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="公共手记"
+            aria-label="打开公共手记"
+          >
+            <img class="logo-icon" src="/favicon.svg" width="28" height="28" alt="" decoding="async" />
+          </a>
           <span class="logo-text">笔记</span>
         </h1>
         <div class="sidebar-actions">
@@ -73,6 +83,10 @@
           />
           <div class="toolbar-right">
             <span class="saved-hint" id="saved-hint" aria-live="polite"></span>
+            <label class="toolbar-public-opt">
+              <input type="checkbox" id="note-public" />
+              <span>公开</span>
+            </label>
             <button type="button" class="btn btn-danger btn-sm" id="btn-delete">删除</button>
           </div>
         </header>
@@ -81,7 +95,7 @@
             <button type="button" class="tab" id="tab-edit" role="tab" aria-selected="false">编辑</button>
             <button type="button" class="tab active" id="tab-preview" role="tab" aria-selected="true">预览</button>
           </div>
-          <span class="md-hint">Markdown，支持粘贴或拖入图片</span>
+          <span class="md-hint">Markdown（EasyMDE），支持粘贴或拖入图片</span>
         </div>
         <div class="editor-main" id="editor-main">
           <textarea
@@ -106,11 +120,15 @@
     <div class="auth-gate-panel">
       <p id="auth-gate-title" class="auth-gate-title">需要登录后才能使用笔记</p>
       <p id="auth-gate-config" class="auth-gate-hint hidden"></p>
-      <p id="auth-gate-hint-login" class="auth-gate-hint">点击下方按钮将跳转到 GitHub 完成授权，完成后会自动回到笔记页。</p>
-      <button type="button" id="btn-github-login" class="btn btn-primary auth-github-btn">使用 GitHub 登录</button>
+      <p id="auth-gate-hint-login" class="auth-gate-hint">点击下方按钮将跳转到 GitHub 或 Gitee 完成授权，完成后会自动回到笔记页。</p>
+      <div class="auth-gate-buttons">
+        <button type="button" id="btn-github-login" class="btn btn-primary auth-oauth-btn">GitHub 登录</button>
+        <button type="button" id="btn-gitee-login" class="btn btn-primary auth-oauth-btn auth-oauth-btn-gitee">Gitee 登录</button>
+      </div>
     </div>
   </div>
 
+  <script src="/vendor/easymde/easymde.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

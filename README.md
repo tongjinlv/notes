@@ -2,7 +2,7 @@
 
 # 本地网页笔记 · Local Notes
 
-轻量、单二进制的 **本地 Markdown 笔记** 应用：内置 Web UI，数据以 `YYYY/MM/DD/<笔记ID>/note.md` 目录结构存放在本机，支持图片粘贴与拖拽上传、明暗主题、侧栏搜索与自定义排序。
+轻量、单二进制的 **本地 Markdown 笔记** 应用：内置 Web UI，数据以 `YYYYMM/<笔记ID>/note.md` 目录结构存放在本机（如 `202603/n_xxx`；仍可读旧版 `YYYY/MM/<id>/`、`YYYY/MM/DD/<id>/`），支持图片粘贴与拖拽上传、明暗主题、侧栏搜索与自定义排序。
 
 **English:** A small self-hosted note app: single Go binary, embedded web UI, Markdown files on disk, image upload, dark/light theme.
 
@@ -60,12 +60,10 @@ Windows 下可使用仓库中的 `build.bat`：
 ```
 notes-vault/
 ├── .notes-sidebar-order.json   # 侧栏顺序（自动生成）
-└── 2026/
-    └── 03/
-        └── 24/
-            └── n_xxxxxxxx/
-                ├── note.md       # YAML 头 + Markdown 正文
-                └── image-*.png   # 附件图片（示例）
+└── 202603/                     # 年月六位一目录
+    └── n_xxxxxxxx/
+        ├── note.md       # YAML 头 + Markdown 正文
+        └── image-*.png   # 附件图片（示例）
 ```
 
 ## HTTP API（摘要）
@@ -90,6 +88,7 @@ notes-vault/
 
 - 默认监听所有网卡时，局域网内可达；请在防火墙或反向代理上按需限制访问。
 - 本仓库定位为**本地/受信网络**使用，未内置多用户认证与审计；勿直接暴露于公网而不加防护。
+- **笔记与图片加密（可选）**：在 `notes-config.json` 中设置 `vaultPassphrase`，或使用环境变量 `NOTES_VAULT_PASSPHRASE`（优先）。启用后写入磁盘的 `note.md` 与粘贴上传的图片（`image-*.*`）均为 AES-256-GCM 密文；主密钥由 PBKDF2 派生一次并缓存在进程内，每文件再经 HKDF 派生密钥，**列表与预览多文件时比旧版「每文件 PBKDF2」快得多**。旧版加密文件仍可直接读取；保存一次后即写为新格式。推送到 GitHub 后若无口令难以还原。**请勿把口令与仓库一起提交**；口令丢失将无法解密已有数据。侧栏顺序等 JSON 仍明文；仅本机/服务进程可解密后通过浏览器展示。
 
 ## 开源许可
 

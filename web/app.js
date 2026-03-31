@@ -9,7 +9,7 @@
   const VIRTUAL_ROW_ESTIMATE_PX = 68;
   const VIRTUAL_OVERSCAN = 8;
 
-  /** @typedef {{ id: string, title: string, body: string, updatedAt: number, dir: string }} Note */
+  /** @typedef {{ id: string, title: string, body: string, updatedAt: number, dir: string, public?: boolean }} Note */
 
   const els = {
     app: document.getElementById("app"),
@@ -31,6 +31,7 @@
     tabPreview: document.getElementById("tab-preview"),
     savedHint: document.getElementById("saved-hint"),
     noteCount: document.getElementById("note-count"),
+    notePublic: document.getElementById("note-public"),
   };
 
   /** @type {Note[]} */
@@ -41,7 +42,7 @@
   let hintTimer = null;
   /** @type {"edit" | "preview"} */
   let viewMode = "preview";
-  /** 当前笔记在仓库中的相对目录，如 2026/03/24/n_xxx，用于解析相对路径图片 */
+  /** 当前笔记在仓库中的相对目录，如 202603/n_xxx（旧版可能为 2026/03/n_xxx 或 2026/03/24/n_xxx），用于解析相对路径图片 */
   let activeNoteDir = "";
   let searchListTimer = null;
   /** @type {Note[]} 当前列表展示的过滤结果（与虚拟列表同步） */
@@ -51,11 +52,88 @@
   let virtualListScrollRaf = 0;
   let authConfigured = false;
   let authEnabled = false;
+  /** @type {boolean | undefined} */
+  let authGitHubOAuth = false;
+  /** @type {boolean | undefined} */
+  let authGiteeOAuth = false;
   /** @type {{ login: string, name?: string, avatarUrl?: string } | null} */
   let authUser = null;
 
+  /** EasyMDE 实例；未加载或降级时为 null */
+  let mdEditor = null;
+
+  function getBodyText() {
+    if (mdEditor) return mdEditor.value();
+    return els.body.value;
+  }
+
+  function setBodyText(s) {
+    const t = String(s);
+    if (mdEditor) mdEditor.value(t);
+    else els.body.value = t;
+  }
+
+  /** @returns {boolean} */
+  function ensureEasyMDE() {
+    if (mdEditor) return true;
+    if (typeof EasyMDE === "undefined") return false;
+    mdEditor = new EasyMDE({
+      element: els.body,
+      spellChecker: false,
+      status: false,
+      autofocus: false,
+      placeholder:
+        "在此编写 Markdown…\n\n可粘贴截图（Ctrl+V）或将图片拖入此区域。",
+      minHeight: "260px",
+      autoDownloadFontAwesome: true,
+      renderingConfig: {
+        singleLineBreaks: false,
+      },
+      toolbar: [
+        "bold",
+        "italic",
+        "strikethrough",
+        "|",
+        "heading-1",
+        "heading-2",
+        "heading-3",
+        "|",
+        "code",
+        "quote",
+        "|",
+        "unordered-list",
+        "ordered-list",
+        "|",
+        "link",
+        "image",
+        "|",
+        "table",
+        "|",
+        "horizontal-rule",
+        "|",
+        "fullscreen",
+        "|",
+        "guide",
+      ],
+    });
+    mdEditor.codemirror.on("change", () => {
+      scheduleSave();
+    });
+    return true;
+  }
+
+  function insertIntoEditor(text) {
+    if (mdEditor) {
+      const cm = mdEditor.codemirror;
+      cm.replaceSelection(text);
+      cm.focus();
+    } else {
+      insertAtCursor(els.body, text);
+    }
+  }
+
   function noteCountWhenNoNotes() {
-    if (!authConfigured) return "配置 githubOAuth 并重启服务后可用";
+    if (!authConfigured) return "配置 githubOAuth 或 giteeOAuth 并重启服务后可用";
     if (authEnabled && !authUser) return "登录后加载笔记";
     return "暂无笔记";
   }
@@ -79,10 +157,14 @@
       const j = await r.json();
       authConfigured = !!j.configured;
       authEnabled = !!j.enabled;
+      authGitHubOAuth = j.githubOAuth === true;
+      authGiteeOAuth = j.giteeOAuth === true;
       authUser = j.user && typeof j.user === "object" ? j.user : null;
     } catch {
       authConfigured = false;
       authEnabled = false;
+      authGitHubOAuth = false;
+      authGiteeOAuth = false;
       authUser = null;
     }
     applyAuthUI();
@@ -96,15 +178,19 @@
     const hintLogin = document.getElementById("auth-gate-hint-login");
 
     if (!authConfigured) {
+      const btnGhEarly = document.getElementById("btn-github-login");
+      const btnGiteeEarly = document.getElementById("btn-gitee-login");
+      if (btnGhEarly) btnGhEarly.classList.remove("hidden");
+      if (btnGiteeEarly) btnGiteeEarly.classList.remove("hidden");
       if (gate) gate.classList.remove("hidden");
-      if (titleEl) titleEl.textContent = "尚未配置 GitHub 登录";
+      if (titleEl) titleEl.textContent = "尚未配置 OAuth 登录";
       if (configEl) {
         configEl.textContent =
-          "请在 notes-config.json 中添加 githubOAuth（clientId、clientSecret、callbackUrl、cookieSecret），保存后重启本程序。";
+          "请在 notes-config.json 中添加 githubOAuth 和/或 giteeOAuth（clientId、clientSecret、callbackUrl、cookieSecret），保存后重启本程序。";
         configEl.classList.remove("hidden");
       }
       if (hintLogin) {
-        hintLogin.textContent = "配置并重启后，点下面按钮会跳转到 GitHub（未配置时会先看到说明页）。";
+        hintLogin.textContent = "配置并重启后，点下面按钮会跳转到 GitHub 或 Gitee（未配置时会先看到说明页）。";
         hintLogin.classList.remove("hidden");
       }
       if (!bar) return;
@@ -118,10 +204,15 @@
       configEl.classList.add("hidden");
     }
     if (hintLogin) {
-      hintLogin.textContent = "点击下方按钮将跳转到 GitHub 授权，完成后会回到本页。";
+      hintLogin.textContent = "点击下方按钮将跳转到 GitHub 或 Gitee 授权，完成后会回到本页。";
       hintLogin.classList.remove("hidden");
     }
     if (titleEl) titleEl.textContent = "需要登录后才能使用笔记";
+
+    const btnGh = document.getElementById("btn-github-login");
+    const btnGitee = document.getElementById("btn-gitee-login");
+    if (btnGh) btnGh.classList.toggle("hidden", authConfigured && !authGitHubOAuth);
+    if (btnGitee) btnGitee.classList.toggle("hidden", authConfigured && !authGiteeOAuth);
 
     if (gate) gate.classList.toggle("hidden", !(!authUser));
     if (!bar) return;
@@ -160,7 +251,7 @@
     virtualRowHeightPx = 0;
     virtualFiltered = [];
     els.title.value = "";
-    els.body.value = "";
+    setBodyText("");
     els.preview.innerHTML = "";
     showEditor(false);
     if (searchListTimer) {
@@ -236,6 +327,9 @@
     virtualRowHeightPx = 0;
     queueMicrotask(() => {
       if (virtualFiltered.length) renderVirtualWindow();
+      if (mdEditor) {
+        requestAnimationFrame(() => mdEditor.codemirror.refresh());
+      }
     });
   }
 
@@ -682,19 +776,30 @@
   }
 
   function updatePreview() {
-    els.preview.innerHTML = renderMarkdown(els.body.value);
+    els.preview.innerHTML = renderMarkdown(getBodyText());
   }
 
   function setViewMode(mode) {
     viewMode = mode;
     const edit = mode === "edit";
+    if (edit) ensureEasyMDE();
     els.tabEdit.classList.toggle("active", edit);
     els.tabPreview.classList.toggle("active", !edit);
     els.tabEdit.setAttribute("aria-selected", edit ? "true" : "false");
     els.tabPreview.setAttribute("aria-selected", edit ? "false" : "true");
-    els.body.classList.toggle("hidden", !edit);
+    const wrap = els.editorMain && els.editorMain.querySelector(".EasyMDEContainer");
+    if (wrap) {
+      wrap.classList.toggle("hidden", !edit);
+    } else {
+      els.body.classList.toggle("hidden", !edit);
+    }
     els.preview.classList.toggle("hidden", edit);
     if (!edit) updatePreview();
+    if (edit && mdEditor) {
+      requestAnimationFrame(() => {
+        mdEditor.codemirror.refresh();
+      });
+    }
   }
 
   function insertAtCursor(ta, text) {
@@ -736,7 +841,7 @@
         setSavedHint("上传图片…");
         const url = await uploadImageFile(file);
         if (viewMode === "preview") setViewMode("edit");
-        insertAtCursor(els.body, "\n\n![](" + url + ")\n\n");
+        insertIntoEditor("\n\n![](" + url + ")\n\n");
         scheduleSave();
       } catch {
         setSavedHint("图片上传失败");
@@ -752,7 +857,8 @@
     activeId = id;
     activeNoteDir = note.dir || "";
     els.title.value = note.title;
-    els.body.value = note.body;
+    setBodyText(note.body);
+    if (els.notePublic) els.notePublic.checked = !!note.public;
     setViewMode(startInEdit ? "edit" : "preview");
     showEditor(true);
     els.title.focus();
@@ -765,12 +871,16 @@
     const note = getActiveNote();
     if (!note) return true;
     const title = els.title.value;
-    const body = els.body.value;
+    const body = getBodyText();
     try {
       const r = await apiFetch("/api/notes/" + encodeURIComponent(note.id), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, body }),
+        body: JSON.stringify({
+          title,
+          body,
+          public: els.notePublic ? !!els.notePublic.checked : false,
+        }),
       });
       if (!r.ok) {
         setSavedHint("保存失败");
@@ -792,11 +902,15 @@
     const note = getActiveNote();
     if (!note) return;
     const title = els.title.value;
-    const body = els.body.value;
+    const body = getBodyText();
     fetch("/api/notes/" + encodeURIComponent(note.id), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, body }),
+      body: JSON.stringify({
+        title,
+        body,
+        public: els.notePublic ? !!els.notePublic.checked : false,
+      }),
       keepalive: true,
       credentials: "same-origin",
     }).catch(() => {});
@@ -833,7 +947,7 @@
     const r = await apiFetch("/api/notes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: "", body: "", beforeId }),
+      body: JSON.stringify({ title: "", body: "", beforeId, public: false }),
     });
     if (!r.ok) {
       setSavedHint("创建失败");
@@ -863,7 +977,7 @@
     activeId = null;
     activeNoteDir = "";
     els.title.value = "";
-    els.body.value = "";
+    setBodyText("");
     els.preview.innerHTML = "";
     showEditor(false);
     renderList();
@@ -879,31 +993,30 @@
   els.tabEdit.addEventListener("click", () => setViewMode("edit"));
   els.tabPreview.addEventListener("click", () => setViewMode("preview"));
 
-  els.body.addEventListener("paste", async (e) => {
-    const items = e.clipboardData?.items;
-    if (!items || !getActiveNote()) return;
-    for (const item of items) {
-      if (item.kind === "file" && item.type.startsWith("image/")) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (!file) continue;
-        try {
-          setSavedHint("上传图片…");
-          const url = await uploadImageFile(file);
-          if (viewMode === "preview") setViewMode("edit");
-          insertAtCursor(els.body, "\n\n![](" + url + ")\n\n");
-          scheduleSave();
-          setSavedHint("");
-        } catch {
-          setSavedHint("图片上传失败");
-        }
-        break;
-      }
-    }
-  });
-
   const main = els.editorMain;
   if (main) {
+    main.addEventListener("paste", async (e) => {
+      const items = e.clipboardData?.items;
+      if (!items || !getActiveNote()) return;
+      for (const item of items) {
+        if (item.kind === "file" && item.type.startsWith("image/")) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (!file) continue;
+          try {
+            setSavedHint("上传图片…");
+            const url = await uploadImageFile(file);
+            if (viewMode === "preview") setViewMode("edit");
+            insertIntoEditor("\n\n![](" + url + ")\n\n");
+            scheduleSave();
+            setSavedHint("");
+          } catch {
+            setSavedHint("图片上传失败");
+          }
+          break;
+        }
+      }
+    });
     main.addEventListener("dragover", (e) => {
       if (!getActiveNote()) return;
       e.preventDefault();
@@ -1007,14 +1120,20 @@
     });
   });
 
+  els.notePublic?.addEventListener("change", scheduleSave);
+
   window.addEventListener("beforeunload", () => {
     clearPendingSave();
     flushEditorKeepalive();
   });
 
-  /** 整页跳转授权：比弹窗更稳，避免小窗里 GitHub 页加载慢、被拦截或脚本异常。 */
+  /** 整页跳转授权：比弹窗更稳，避免小窗里 OAuth 页加载慢、被拦截或脚本异常。 */
   function startGitHubLogin() {
     window.location.assign("/auth/github/start");
+  }
+
+  function startGiteeLogin() {
+    window.location.assign("/auth/gitee/start");
   }
 
   document.getElementById("auth-gate")?.addEventListener("click", (e) => {
@@ -1022,12 +1141,16 @@
       e.preventDefault();
       startGitHubLogin();
     }
+    if (e.target && e.target.id === "btn-gitee-login") {
+      e.preventDefault();
+      startGiteeLogin();
+    }
   });
 
   window.addEventListener("message", (ev) => {
     if (ev.origin !== window.location.origin) return;
     const d = ev.data;
-    if (!d || d.type !== "notes-github-oauth") return;
+    if (!d || (d.type !== "notes-oauth" && d.type !== "notes-github-oauth")) return;
     if (d.ok) {
       refreshAuth().then(async () => {
         if (authConfigured && authUser) {
