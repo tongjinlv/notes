@@ -798,6 +798,60 @@ body {
   font-size: 1.1rem;
 }
 
+/* Goldmark GFM：表格、引用、任务列表、删除线 */
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.85em 0;
+  font-size: 0.92em;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.65rem;
+  text-align: left;
+}
+
+.markdown-body th {
+  background: var(--bg-sidebar);
+  font-weight: 600;
+}
+
+.markdown-body blockquote {
+  margin: 0.85em 0;
+  padding: 0.35rem 0 0.35rem 0.9rem;
+  border-left: 3px solid var(--accent);
+  color: var(--text-muted);
+}
+
+.markdown-body blockquote > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body ul.contains-task-list,
+.markdown-body ol.contains-task-list {
+  list-style: none;
+  padding-left: 0.25rem;
+}
+
+.markdown-body li.task-list-item {
+  list-style: none;
+}
+
+.markdown-body li.task-list-item input[type="checkbox"] {
+  margin-right: 0.4rem;
+  vertical-align: middle;
+}
+
+.markdown-body del {
+  opacity: 0.85;
+}
+
 .markdown-body p {
   margin: 0 0 0.85em;
 }
