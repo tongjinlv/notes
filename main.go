@@ -611,7 +611,7 @@ func main() {
 	}
 
 	log.Printf("配置: %s", cfgFile)
-	log.Printf("Markdown 仓库根: %s/users/<provider>/<登录名>/（其下 YYYY/MM/DD/<id>/note.md）", vaultBase)
+	log.Printf("Markdown 仓库根: %s/users/<provider>/<登录名>/（其下 YYYYMM/<id>/note.md，如 202603/n_xxx；仍兼容 YYYY/MM/<id>、YYYY/MM/DD/<id>）", vaultBase)
 	if vaultPassphrase != "" {
 		log.Println("笔记加密: 已启用（note.md 在磁盘上为密文；口令勿提交到 Git，可用环境变量 NOTES_VAULT_PASSPHRASE）")
 	}
