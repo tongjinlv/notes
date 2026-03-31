@@ -1,28 +1,67 @@
-<img width="1912" height="932" alt="image" src="https://github.com/user-attachments/assets/8d464e91-c477-4265-a7aa-49134e55fe23" />
-
 # 本地网页笔记 · Local Notes
 
-轻量、单二进制的 **本地 Markdown 笔记** 应用：内置 Web UI，数据以 `YYYYMM/<笔记ID>/note.md` 目录结构存放在本机（例如 `202603/n_xxx`，兼容旧版 `YYYY/MM/<id>` 与 `YYYY/MM/DD/<id>`），支持图片粘贴与拖拽上传、明暗主题、侧栏搜索与自定义排序。
+一个对新手友好的本地网页笔记工具：
 
-**English:** A small self-hosted note app: single Go binary, embedded web UI, Markdown files on disk, image upload, dark/light theme.
+- 浏览器里写 Markdown，自动保存
+- 粘贴或拖拽上传图片，和笔记放一起
+- 支持公开页展示勾选为「公开」的笔记
+- 支持 GitHub / Gitee OAuth 登录（多用户隔离）
+
+适合个人知识库、小团队内网笔记、或者把数据同步到 Git 仓库做版本管理。
 
 ---
 
-## 功能概览
+## 1 分钟理解它怎么工作
 
-- 浏览器中编辑与预览 Markdown（简易渲染）
-- 笔记按侧栏列表管理；支持搜索标题与正文
-- 新建笔记可插在「当前选中项之前」或列表顶部；顺序持久化在仓库根目录 `.notes-sidebar-order.json`
-- 图片：粘贴截图或拖入编辑器，随笔记保存在同一目录
-- 主题切换（本地存储）
-- 可选安装为 **Windows / Linux 系统服务**（[kardianos/service](https://github.com/kardianos/service)）
-- 前端静态资源嵌入二进制，部署只需一个可执行文件
+- 程序启动后提供一个本地网页（比如 `http://127.0.0.1:8787`）
+- 你在网页里编辑笔记，内容写到本机磁盘
+- 每位登录用户都有自己的目录：`users/<provider>/<login>/...`
+- 每篇笔记是一个文件夹，默认目录结构是 `YYYYMM/<noteId>/note.md`
 
-## 环境要求
+示例（以 GitHub 用户 `alice` 为例）：
 
-- [Go](https://go.dev/dl/) **1.21+**（从源码构建时）
+```text
+notes-vault/
+├── users/
+│   └── github/
+│       └── alice/
+│           └── 202603/
+│               └── n_xxxxxxxx/
+│                   ├── note.md
+│                   └── image-*.png
+└── .notes-sidebar-order.json
+```
 
-## 快速开始
+---
+
+## 你将获得什么功能
+
+- Markdown 编辑 + 预览
+- 侧栏搜索（标题/正文）
+- 拖拽排序（顺序保存在 `.notes-sidebar-order.json`）
+- 图片粘贴上传
+- 明暗主题切换
+- 公开笔记列表与详情页
+- Windows / Linux 服务安装（可选）
+
+---
+
+## 运行前准备
+
+### 必需
+
+- Go 1.21+（仅从源码运行/构建时需要）
+
+### 登录方式（二选一或都配）
+
+- GitHub OAuth
+- Gitee OAuth
+
+> 不配置 OAuth 也能启动程序，但前端会提示你先配置登录，无法正常使用笔记功能。
+
+---
+
+## 快速启动（开发机最简单）
 
 ```bash
 git clone https://github.com/你的ID/你的仓库.git
@@ -30,69 +69,147 @@ cd 你的仓库
 go run .
 ```
 
-在可执行文件同目录放置 `notes-config.json`（可参考 `notes-config.example.json`），其中 `listen` 控制监听地址。浏览器访问控制台输出的 URL。
+默认读取当前目录下 `notes-config.json`。  
+启动后看控制台日志里的地址，浏览器打开即可。
+
+---
+
+## 配置文件说明（`notes-config.json`）
+
+最小示例（仅演示结构）：
+
+```json
+{
+  "listen": ":8787",
+  "data": "notes-vault",
+  "githubOAuth": {
+    "clientId": "xxx",
+    "clientSecret": "xxx",
+    "callbackUrl": "http://127.0.0.1:8787/auth/github/callback",
+    "cookieSecret": "请替换成足够长的随机字符串",
+    "allowedLogins": []
+  },
+  "giteeOAuth": {
+    "clientId": "xxx",
+    "clientSecret": "xxx",
+    "callbackUrl": "http://127.0.0.1:8787/auth/gitee/callback",
+    "cookieSecret": "请替换成足够长的随机字符串",
+    "allowedLogins": []
+  }
+}
+```
+
+字段说明：
+
+- `listen`：监听地址
+  - `:8787` 表示本机/局域网都可访问
+  - `127.0.0.1:8787` 表示仅本机访问（更安全）
+- `data`：数据目录
+  - 推荐写相对路径 `notes-vault`
+  - 也可写绝对路径
+- `callbackUrl`：OAuth 回调地址，必须和平台应用设置完全一致
+- `cookieSecret`：用于签名会话，建议 32+ 长随机串
+- `allowedLogins`：可选白名单，不填通常表示不限制（按服务端实现）
+
+---
+
+## OAuth 登录详细配置（小白版）
+
+下面是最容易踩坑的部分，按步骤做就行。
+
+### A. GitHub 登录配置
+
+1. 打开 GitHub → Settings → Developer settings → OAuth Apps → New OAuth App  
+2. 填写：
+   - Application name：随意（如 `Local Notes`）
+   - Homepage URL：`http://127.0.0.1:8787`
+   - Authorization callback URL：`http://127.0.0.1:8787/auth/github/callback`
+3. 创建后拿到：
+   - `Client ID`
+   - `Client Secret`
+4. 填到 `notes-config.json` 的 `githubOAuth`。
+
+### B. Gitee 登录配置
+
+1. 打开 Gitee 开放平台，创建第三方应用  
+2. 回调地址填：`http://127.0.0.1:8787/auth/gitee/callback`
+3. 获取 `clientId` / `clientSecret`
+4. 填到 `notes-config.json` 的 `giteeOAuth`。
+
+### C. 启动与验证
+
+1. 保存配置后重启程序
+2. 打开首页
+3. 点击 GitHub 或 Gitee 登录按钮
+4. 授权完成后自动回到笔记页
+
+### 常见报错排查
+
+- **“回调地址不匹配”**
+  - 检查平台配置与 `callbackUrl` 是否逐字一致（协议、域名、端口、路径都要一致）
+- **“服务未配置 OAuth”**
+  - `clientId/clientSecret/callbackUrl/cookieSecret` 是否有空值
+- **登录后仍未进入**
+  - 看控制台日志是否有 OAuth 配置无效提示
+  - 检查浏览器是否拦截了第三方跳转/弹窗
+
+---
+
+## 构建与服务部署
 
 ### 从源码构建
 
 ```bash
 go build -o notes .
-# 写入版本号（可选）
-go build -ldflags "-X=main.version=1.0.0" -o notes .
 ```
 
-Windows 下可使用仓库中的 `build.bat`：
+Windows 可用：
 
-- `build.bat build` — 编译生成 `notes.exe`（可通过环境变量 `APP_VERSION` 指定版本字符串）
-- `build.bat run` — `go run .`（配置见当前目录 `notes-config.json`，可用 `-config` 指定路径）
+- `build.bat build`：编译 `notes.exe`
+- `build.bat run`：直接运行
 
 ### 命令行参数
 
 | 参数 | 说明 |
-|------|------|
-| `-config` | 配置文件路径；省略则为 `<可执行文件目录>/notes-config.json`（`go run` 时为当前目录） |
-| `-service` | `install` / `uninstall` / `start` / `stop` / `restart`（安装服务通常需要管理员权限） |
-| `-svc-name` | 服务内部名称，默认为 `LocalNotes`，与 `install` / `uninstall` 等需一致 |
+| ---- | ---- |
+| `-config` | 配置文件路径；默认 `<可执行文件目录>/notes-config.json`（`go run` 时为当前目录） |
+| `-service` | `install` / `uninstall` / `start` / `stop` / `restart` |
+| `-svc-name` | 服务名，默认 `LocalNotes` |
 
-监听地址与仓库路径仅在 **`notes-config.json`** 中配置：`listen`（如 `:8787`、`127.0.0.1:8787`）、`data`（仓库目录，空则默认可执行文件旁的 `notes-vault`；可为旧版 `notes-data.json` 路径）。安装为 Windows 服务时仅写入 `-config=...`，修改监听或仓库后改 JSON 并重启服务即可。
+---
 
-### 数据目录结构
-
-```
-notes-vault/
-├── .notes-sidebar-order.json   # 侧栏顺序（自动生成）
-└── 202603/
-    └── n_xxxxxxxx/
-        ├── note.md       # YAML 头 + Markdown 正文
-        └── image-*.png   # 附件图片（示例）
-```
-
-## HTTP API（摘要）
+## API 摘要
 
 | 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/notes` | 列表（顺序由侧栏顺序文件与规则合并） |
-| POST | `/api/notes` | 新建；JSON 可含 `beforeId`，表示插在该 id 之前 |
-| PUT | `/api/notes/:id` | 更新标题与正文 |
-| DELETE | `/api/notes/:id` | 删除笔记目录 |
-| POST | `/api/media` | 表单：`note`（笔记 id）、`file`（图片文件） |
-| GET | `/api/vault/*` | 按仓库相对路径读取资源（用于笔记内图片等） |
+| ---- | ---- | ---- |
+| GET | `/api/notes` | 获取笔记列表 |
+| POST | `/api/notes` | 新建笔记 |
+| PUT | `/api/notes/:id` | 更新笔记 |
+| DELETE | `/api/notes/:id` | 删除笔记 |
+| POST | `/api/media` | 上传图片 |
+| GET | `/api/vault/*` | 读取笔记附件 |
+| GET | `/api/public/posts` | 公开笔记列表 |
+| GET | `/api/public/post` | 公开笔记详情 |
+
+---
+
+## 安全建议（务必看）
+
+- 能用 `127.0.0.1` 就不要监听全网卡
+- 不要直接裸露到公网
+- `clientSecret` 和 `cookieSecret` 不要提交到 Git
+- 若部署在服务器，建议再加一层反向代理与访问控制
+
+---
 
 ## 技术栈
 
-- 后端：[Go](https://go.dev/)、[Gin](https://github.com/gin-gonic/gin)
-- 服务封装：[kardianos/service](https://github.com/kardianos/service)
-- 笔记元数据：YAML front matter（[gopkg.in/yaml.v3](https://github.com/go-yaml/yaml)）
-- 前端：原生 HTML / CSS / JS，通过 `embed` 打包
+- Go + Gin
+- YAML front matter（`note.md` 元数据）
+- 纯 HTML/CSS/JS 前端（embed 打包）
 
-## 安全说明
+---
 
-- 默认监听所有网卡时，局域网内可达；请在防火墙或反向代理上按需限制访问。
-- 本仓库定位为**本地/受信网络**使用，未内置多用户认证与审计；勿直接暴露于公网而不加防护。
+## 许可证
 
-## 开源许可
-
-本项目基于 [MIT License](LICENSE) 开源。
-
-## 贡献
-
-欢迎 Issue 与 Pull Request。提交前请确保 `go build ./...` 可通过。
+MIT License
