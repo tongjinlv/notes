@@ -316,7 +316,7 @@
     const by = escapeHtml(post.authorLabel || "");
     const when = escapeHtml(formatTime(post.updatedAt));
     const h = [];
-    h.push('<div class="public-shell-inner public-shell-inner-detail">');
+    h.push('<div class="public-shell-inner">');
     h.push('<header class="public-detail-header">');
     h.push('<div class="public-detail-toolbar">');
     h.push('<nav class="public-blog-nav public-detail-nav" aria-label="导航">');

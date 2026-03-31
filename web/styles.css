@@ -882,9 +882,10 @@ body.public-blog-page {
 }
 
 .public-blog-wrap {
-  max-width: 46rem;
+  width: 100%;
+  max-width: min(100%, 72rem);
   margin: 0 auto;
-  padding: 1.75rem 1.25rem 3.5rem;
+  padding: clamp(1.25rem, 2vw, 1.75rem) clamp(1rem, 2vw, 1.75rem) 3.5rem;
 }
 
 .public-loading,
@@ -1132,10 +1133,6 @@ body.public-blog-page {
   font-size: 0.92rem;
   line-height: 1.6;
   color: var(--text-muted);
-}
-
-.public-shell-inner-detail {
-  max-width: 48rem;
 }
 
 .public-detail-header {
