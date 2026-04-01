@@ -9,7 +9,7 @@
   const VIRTUAL_ROW_ESTIMATE_PX = 68;
   const VIRTUAL_OVERSCAN = 8;
 
-  /** @typedef {{ id: string, title: string, body: string, updatedAt: number, dir: string, public?: boolean }} Note */
+  /** @typedef {{ id: string, title: string, body: string, updatedAt: number, dir: string, public?: boolean, tags?: string[], categories?: string[] }} Note */
 
   const els = {
     app: document.getElementById("app"),
@@ -32,6 +32,8 @@
     savedHint: document.getElementById("saved-hint"),
     noteCount: document.getElementById("note-count"),
     notePublic: document.getElementById("note-public"),
+    noteTags: document.getElementById("note-tags"),
+    noteCategories: document.getElementById("note-categories"),
   };
 
   /** @type {Note[]} */
@@ -252,6 +254,8 @@
     virtualFiltered = [];
     els.title.value = "";
     setBodyText("");
+    if (els.noteTags) els.noteTags.value = "";
+    if (els.noteCategories) els.noteCategories.value = "";
     els.preview.innerHTML = "";
     showEditor(false);
     if (searchListTimer) {
@@ -383,6 +387,20 @@
       .filter((t) => t.length > 0);
   }
 
+  /** @param {string[] | undefined} arr */
+  function stringListToInput(arr) {
+    if (!arr || !arr.length) return "";
+    return arr.join("、");
+  }
+
+  /** @param {string} s */
+  function inputToStringList(s) {
+    return s
+      .split(/[,，;；、\s]+/)
+      .map((x) => String(x).trim())
+      .filter(Boolean);
+  }
+
   /**
    * 无搜索词时顺序与 API 一致；有搜索时：空格分词须全部命中（标题或正文前段），标题命中数多的排前。
    */
@@ -396,13 +414,17 @@
       const bodySlice =
         n.body.length > SEARCH_BODY_MAX_CHARS ? n.body.slice(0, SEARCH_BODY_MAX_CHARS) : n.body;
       const bodyL = bodySlice.toLowerCase();
+      const tagsL = (Array.isArray(n.tags) ? n.tags : []).join(" ").toLowerCase();
+      const catsL = (Array.isArray(n.categories) ? n.categories : []).join(" ").toLowerCase();
 
       let titleHits = 0;
       let ok = true;
       for (const t of tokens) {
         const inT = titleL.includes(t);
         const inB = bodyL.includes(t);
-        if (!inT && !inB) {
+        const inTag = tagsL.includes(t);
+        const inCat = catsL.includes(t);
+        if (!inT && !inB && !inTag && !inCat) {
           ok = false;
           break;
         }
@@ -859,6 +881,8 @@
     els.title.value = note.title;
     setBodyText(note.body);
     if (els.notePublic) els.notePublic.checked = !!note.public;
+    if (els.noteTags) els.noteTags.value = stringListToInput(note.tags);
+    if (els.noteCategories) els.noteCategories.value = stringListToInput(note.categories);
     setViewMode(startInEdit ? "edit" : "preview");
     showEditor(true);
     els.title.focus();
@@ -872,6 +896,8 @@
     if (!note) return true;
     const title = els.title.value;
     const body = getBodyText();
+    const tags = els.noteTags ? inputToStringList(els.noteTags.value) : [];
+    const categories = els.noteCategories ? inputToStringList(els.noteCategories.value) : [];
     try {
       const r = await apiFetch("/api/notes/" + encodeURIComponent(note.id), {
         method: "PUT",
@@ -880,6 +906,8 @@
           title,
           body,
           public: els.notePublic ? !!els.notePublic.checked : false,
+          tags,
+          categories,
         }),
       });
       if (!r.ok) {
@@ -903,6 +931,8 @@
     if (!note) return;
     const title = els.title.value;
     const body = getBodyText();
+    const tags = els.noteTags ? inputToStringList(els.noteTags.value) : [];
+    const categories = els.noteCategories ? inputToStringList(els.noteCategories.value) : [];
     fetch("/api/notes/" + encodeURIComponent(note.id), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -910,6 +940,8 @@
         title,
         body,
         public: els.notePublic ? !!els.notePublic.checked : false,
+        tags,
+        categories,
       }),
       keepalive: true,
       credentials: "same-origin",
@@ -978,6 +1010,8 @@
     activeNoteDir = "";
     els.title.value = "";
     setBodyText("");
+    if (els.noteTags) els.noteTags.value = "";
+    if (els.noteCategories) els.noteCategories.value = "";
     els.preview.innerHTML = "";
     showEditor(false);
     renderList();
@@ -1121,6 +1155,8 @@
   });
 
   els.notePublic?.addEventListener("change", scheduleSave);
+  els.noteTags?.addEventListener("input", scheduleSave);
+  els.noteCategories?.addEventListener("input", scheduleSave);
 
   window.addEventListener("beforeunload", () => {
     clearPendingSave();

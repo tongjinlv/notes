@@ -20,12 +20,14 @@ import (
 
 // Note 与前端 JSON 对齐；Dir 为相对 vault 的路径，如 2026-03/n_xxx（正斜杠）。
 type Note struct {
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	Body       string `json:"body"`
-	UpdatedAt  int64  `json:"updatedAt"`
-	Dir        string `json:"dir"`
-	Public bool `json:"public"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Body        string   `json:"body"`
+	UpdatedAt   int64    `json:"updatedAt"`
+	Dir         string   `json:"dir"`
+	Public      bool     `json:"public"`
+	Tags        []string `json:"tags,omitempty"`
+	Categories  []string `json:"categories,omitempty"`
 }
 
 // noteFMIn 读取 front matter：兼容本站字段与 Hugo 常用字段（date、draft、tags 等）。
@@ -39,14 +41,39 @@ type noteFMIn struct {
 	Categories []string `yaml:"categories"`
 }
 
+// hugoFlowQuotedList 序列化为 Hugo 常见行内数组：tags: ["技术", "Hugo"]
+type hugoFlowQuotedList []string
+
+func (s hugoFlowQuotedList) MarshalYAML() (interface{}, error) {
+	if len(s) == 0 {
+		return nil, nil
+	}
+	seq := &yaml.Node{
+		Kind:    yaml.SequenceNode,
+		Style:   yaml.FlowStyle,
+		Content: make([]*yaml.Node, 0, len(s)),
+	}
+	for _, x := range s {
+		seq.Content = append(seq.Content, &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
+			Value: x,
+			Style: yaml.DoubleQuotedStyle,
+		})
+	}
+	return seq, nil
+}
+
 // noteFMOut 写入 front matter：带 Hugo 常见的 date / draft（draft 与 public 互斥语义：draft=true 表示未发布）。
 type noteFMOut struct {
-	ID      string `yaml:"id"`
-	Title   string `yaml:"title"`
-	Updated string `yaml:"updated"`
-	Date    string `yaml:"date,omitempty"`
-	Public  bool   `yaml:"public"`
-	Draft   bool   `yaml:"draft"`
+	ID         string             `yaml:"id"`
+	Title      string             `yaml:"title"`
+	Updated    string             `yaml:"updated"`
+	Date       string             `yaml:"date,omitempty"`
+	Public     bool               `yaml:"public"`
+	Draft      bool               `yaml:"draft"`
+	Tags       hugoFlowQuotedList `yaml:"tags,omitempty"`
+	Categories hugoFlowQuotedList `yaml:"categories,omitempty"`
 }
 
 type legacyFile struct {
@@ -159,6 +186,29 @@ func updatedAtFromFM(updated string, dateFromMap interface{}, modTime time.Time)
 	return modTime.UnixMilli()
 }
 
+func normalizeStringSlice(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func parseNoteMD(raw []byte, folderID string, modTime time.Time) (Note, error) {
 	front, body, ok := splitFrontMatter(raw)
 	n := Note{Dir: ""}
@@ -187,6 +237,8 @@ func parseNoteMD(raw []byte, folderID string, modTime time.Time) (Note, error) {
 	n.Title = fm.Title
 	n.UpdatedAt = updatedAtFromFM(fm.Updated, dateVal, modTime)
 	n.Public = resolvePublicFromFM(fm.Public, fm.Draft)
+	n.Tags = normalizeStringSlice(fm.Tags)
+	n.Categories = normalizeStringSlice(fm.Categories)
 	n.Body = string(body)
 	return n, nil
 }
@@ -194,12 +246,14 @@ func parseNoteMD(raw []byte, folderID string, modTime time.Time) (Note, error) {
 func composeNoteMD(n Note, updated time.Time) ([]byte, error) {
 	ut := updated.UTC()
 	fm := noteFMOut{
-		ID:      n.ID,
-		Title:   n.Title,
-		Updated: ut.Format(time.RFC3339),
-		Date:    ut.Format("2006-01-02"),
-		Public:  n.Public,
-		Draft:   !n.Public,
+		ID:         n.ID,
+		Title:      n.Title,
+		Updated:    ut.Format(time.RFC3339),
+		Date:       ut.Format("2006-01-02"),
+		Public:     n.Public,
+		Draft:      !n.Public,
+		Tags:       hugoFlowQuotedList(normalizeStringSlice(n.Tags)),
+		Categories: hugoFlowQuotedList(normalizeStringSlice(n.Categories)),
 	}
 	head, err := yaml.Marshal(fm)
 	if err != nil {
@@ -416,7 +470,7 @@ func (v *Vault) List() ([]Note, error) {
 	return v.applySidebarOrderUnlocked(notes, order), nil
 }
 
-func (v *Vault) Create(title, body, beforeID string, public bool) (Note, error) {
+func (v *Vault) Create(title, body, beforeID string, public bool, tags, categories []string) (Note, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -431,7 +485,10 @@ func (v *Vault) Create(title, body, beforeID string, public bool) (Note, error) 
 	if err := os.MkdirAll(full, 0o755); err != nil {
 		return Note{}, err
 	}
-	n := Note{ID: id, Title: title, Body: body, UpdatedAt: t.UnixMilli(), Dir: dirRel, Public: public}
+	n := Note{
+		ID: id, Title: title, Body: body, UpdatedAt: t.UnixMilli(), Dir: dirRel, Public: public,
+		Tags: normalizeStringSlice(tags), Categories: normalizeStringSlice(categories),
+	}
 	raw, err := composeNoteMD(n, t)
 	if err != nil {
 		return Note{}, err
@@ -448,7 +505,7 @@ func (v *Vault) Create(title, body, beforeID string, public bool) (Note, error) 
 	return n, nil
 }
 
-func (v *Vault) Update(id, title, body string, public bool) (Note, error) {
+func (v *Vault) Update(id, title, body string, public bool, tags, categories []string) (Note, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -457,7 +514,10 @@ func (v *Vault) Update(id, title, body string, public bool) (Note, error) {
 		return Note{}, err
 	}
 	t := time.Now()
-	n := Note{ID: id, Title: title, Body: body, UpdatedAt: t.UnixMilli(), Dir: dirRel, Public: public}
+	n := Note{
+		ID: id, Title: title, Body: body, UpdatedAt: t.UnixMilli(), Dir: dirRel, Public: public,
+		Tags: normalizeStringSlice(tags), Categories: normalizeStringSlice(categories),
+	}
 	raw, err := composeNoteMD(n, t)
 	if err != nil {
 		return Note{}, err

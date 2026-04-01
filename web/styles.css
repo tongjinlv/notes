@@ -621,6 +621,60 @@ body {
   background: var(--bg-elevated);
 }
 
+.editor-subbar-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.note-meta-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 1rem;
+}
+
+.note-meta-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.note-meta-label-text {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.note-meta-input {
+  width: min(14rem, 32vw);
+  min-width: 6rem;
+  padding: 0.28rem 0.45rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.note-meta-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+.note-meta-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
 .view-tabs {
   display: inline-flex;
   border: 1px solid var(--border);

@@ -81,3 +81,25 @@ func TestComposeNoteMD_IncludesDraftAndDate(t *testing.T) {
 		t.Fatalf("expected date line, got:\n%s", s)
 	}
 }
+
+func TestComposeNoteMD_TagsCategoriesFlowStyle(t *testing.T) {
+	n := Note{
+		ID:         "n_1",
+		Title:      "t",
+		Body:       "b",
+		Public:     true,
+		Tags:       []string{"技术", "Hugo"},
+		Categories: []string{"技术教程"},
+	}
+	b, err := composeNoteMD(n, time.Date(2025, 12, 6, 15, 30, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `tags: ["技术", "Hugo"]`) {
+		t.Fatalf("expected Hugo-style tags line, got:\n%s", s)
+	}
+	if !strings.Contains(s, `categories: ["技术教程"]`) {
+		t.Fatalf("expected Hugo-style categories line, got:\n%s", s)
+	}
+}

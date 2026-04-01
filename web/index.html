@@ -91,9 +91,37 @@
           </div>
         </header>
         <div class="editor-subbar">
-          <div class="view-tabs" role="tablist" aria-label="正文视图">
-            <button type="button" class="tab" id="tab-edit" role="tab" aria-selected="false">编辑</button>
-            <button type="button" class="tab active" id="tab-preview" role="tab" aria-selected="true">预览</button>
+          <div class="editor-subbar-main">
+            <div class="view-tabs" role="tablist" aria-label="正文视图">
+              <button type="button" class="tab" id="tab-edit" role="tab" aria-selected="false">编辑</button>
+              <button type="button" class="tab active" id="tab-preview" role="tab" aria-selected="true">预览</button>
+            </div>
+            <div class="note-meta-fields" aria-label="标签与分类">
+              <label class="note-meta-label">
+                <span class="note-meta-label-text">标签</span>
+                <input
+                  type="text"
+                  id="note-tags"
+                  class="note-meta-input"
+                  placeholder="技术、Hugo"
+                  maxlength="800"
+                  autocomplete="off"
+                  aria-label="标签，逗号或顿号分隔"
+                />
+              </label>
+              <label class="note-meta-label">
+                <span class="note-meta-label-text">分类</span>
+                <input
+                  type="text"
+                  id="note-categories"
+                  class="note-meta-input"
+                  placeholder="技术教程"
+                  maxlength="800"
+                  autocomplete="off"
+                  aria-label="分类，逗号或顿号分隔"
+                />
+              </label>
+            </div>
           </div>
           <span class="md-hint">Markdown（EasyMDE），支持粘贴或拖入图片</span>
         </div>

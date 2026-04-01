@@ -286,17 +286,19 @@ func buildRouter(vaultBase string, webRoot fs.FS, auth *authBundle) http.Handler
 	})
 
 	type writeBody struct {
-		Title    string `json:"title"`
-		Body     string `json:"body"`
-		BeforeID string `json:"beforeId"`
-		Public   bool   `json:"public"`
+		Title        string   `json:"title"`
+		Body         string   `json:"body"`
+		BeforeID     string   `json:"beforeId"`
+		Public       bool     `json:"public"`
+		Tags         []string `json:"tags"`
+		Categories   []string `json:"categories"`
 	}
 
 	api.POST("/notes", func(c *gin.Context) {
 		v := mustCtxVault(c)
 		var wb writeBody
 		_ = c.ShouldBindJSON(&wb)
-		n, err := v.Create(wb.Title, wb.Body, wb.BeforeID, wb.Public)
+		n, err := v.Create(wb.Title, wb.Body, wb.BeforeID, wb.Public, wb.Tags, wb.Categories)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -312,7 +314,7 @@ func buildRouter(vaultBase string, webRoot fs.FS, auth *authBundle) http.Handler
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
 			return
 		}
-		n, err := v.Update(id, wb.Title, wb.Body, wb.Public)
+		n, err := v.Update(id, wb.Title, wb.Body, wb.Public, wb.Tags, wb.Categories)
 		if err != nil {
 			if err == os.ErrNotExist {
 				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
