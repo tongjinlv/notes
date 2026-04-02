@@ -16,7 +16,7 @@
 - 程序启动后提供一个本地网页（比如 `http://127.0.0.1:8787`）
 - 你在网页里编辑笔记，内容写到本机磁盘
 - 每位登录用户都有自己的目录：`users/<provider>/<login>/...`
-- 每篇笔记是一个文件夹，默认目录结构是 `YYYY-MM/<noteId>/note.md`（年-月，中间为连字符）
+- 每篇笔记是一个文件夹，默认目录结构是 `YYYY-MM/<noteId>/index.md`（与 Hugo leaf bundle 一致；旧数据可为 `note.md`）
 
 示例（以 GitHub 用户 `alice` 为例）：
 
@@ -27,7 +27,7 @@ notes-vault/
 │       └── alice/
 │           └── 2026-03/
 │               └── n_xxxxxxxx/
-│                   ├── note.md
+│                   ├── index.md
 │                   └── image-*.png
 └── .notes-sidebar-order.json
 ```
@@ -211,7 +211,7 @@ Windows 可用：
 ## 技术栈
 
 - Go + Gin
-- YAML front matter（`note.md` 元数据）
+- YAML front matter（`index.md` 元数据）
 - 纯 HTML/CSS/JS 前端（embed 打包）
 
 ---

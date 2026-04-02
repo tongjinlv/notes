@@ -381,7 +381,7 @@ func (v *Vault) listNotesRawUnlocked() ([]Note, error) {
 		if d.IsDir() {
 			return nil
 		}
-		if filepath.Base(path) != "note.md" {
+		if !shouldProcessNoteMarkdownPath(path) {
 			return nil
 		}
 		rel, e := filepath.Rel(v.root, path)
@@ -493,7 +493,7 @@ func (v *Vault) Create(title, body, beforeID string, public bool, tags, categori
 	if err != nil {
 		return Note{}, err
 	}
-	if err := os.WriteFile(filepath.Join(full, "note.md"), raw, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(full, noteMarkdownFile), raw, 0o644); err != nil {
 		return Note{}, err
 	}
 	before := beforeID
@@ -522,10 +522,11 @@ func (v *Vault) Update(id, title, body string, public bool, tags, categories []s
 	if err != nil {
 		return Note{}, err
 	}
-	full := filepath.Join(v.abs(dirRel), "note.md")
+	full := filepath.Join(v.abs(dirRel), noteMarkdownFile)
 	if err := os.WriteFile(full, raw, 0o644); err != nil {
 		return Note{}, err
 	}
+	_ = os.Remove(filepath.Join(v.abs(dirRel), legacyNoteMarkdownFile))
 	invalidatePublicPostCache()
 	return n, nil
 }
@@ -536,7 +537,7 @@ func (v *Vault) findDirByIDUnlocked(id string) (string, error) {
 	}
 	var found string
 	_ = filepath.WalkDir(v.root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || filepath.Base(path) != "note.md" {
+		if err != nil || d.IsDir() || !shouldProcessNoteMarkdownPath(path) {
 			return nil
 		}
 		rel, e := filepath.Rel(v.root, path)
@@ -670,7 +671,7 @@ func migrateLegacyJSON(vaultRoot, jsonPath string) error {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(full, "note.md"), rawMD, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(full, noteMarkdownFile), rawMD, 0o644); err != nil {
 			return err
 		}
 	}
@@ -685,7 +686,7 @@ func vaultHasAnyNote(vaultRoot string) bool {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-		if filepath.Base(path) == "note.md" {
+		if isNoteMarkdownFilename(filepath.Base(path)) {
 			found = true
 			return filepath.SkipAll
 		}

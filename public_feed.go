@@ -98,7 +98,7 @@ func rewritePublicMarkdownImages(body, provider, login, dirRel string) string {
 	})
 }
 
-// parseUsersDirNotePath 解析 users 目录下相对路径（不含 note.md），得到 provider、磁盘上的 login 目录名、笔记目录。
+// parseUsersDirNotePath 解析 users 目录下相对路径（不含 index.md/note.md），得到 provider、磁盘上的 login 目录名、笔记目录。
 func parseUsersDirNotePath(dirRel string) (provider, login string, noteParts []string, ok bool) {
 	dirRel = filepath.ToSlash(dirRel)
 	parts := strings.Split(dirRel, "/")
@@ -145,7 +145,7 @@ func collectPublicPosts(vaultBase string) ([]PublicPostItem, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || filepath.Base(path) != "note.md" {
+		if d.IsDir() || !shouldProcessNoteMarkdownPath(path) {
 			return nil
 		}
 		parent, e := filepath.Rel(usersDir, filepath.Dir(path))
@@ -359,7 +359,11 @@ func loadPublicPostDetail(vaultBase, provider, login, dirRel string) (PublicPost
 	if !isNoteLayoutDir(parts) {
 		return PublicPostItem{}, os.ErrNotExist
 	}
-	notePath := filepath.Join(vaultBase, "users", provider, login, filepath.FromSlash(dirRel), "note.md")
+	noteDirAbs := filepath.Join(vaultBase, "users", provider, login, filepath.FromSlash(dirRel))
+	notePath, ok := resolveNoteMarkdownPath(noteDirAbs)
+	if !ok {
+		return PublicPostItem{}, os.ErrNotExist
+	}
 	raw, err := os.ReadFile(notePath)
 	if err != nil {
 		return PublicPostItem{}, err
@@ -485,7 +489,12 @@ func registerPublicAPI(r *gin.Engine, vaultBase string) {
 			c.Status(http.StatusNotFound)
 			return
 		}
-		notePath := filepath.Join(vaultBase, "users", provider, login, filepath.FromSlash(noteDir), "note.md")
+		noteDirAbs := filepath.Join(vaultBase, "users", provider, login, filepath.FromSlash(noteDir))
+		notePath, ok := resolveNoteMarkdownPath(noteDirAbs)
+		if !ok {
+			c.Status(http.StatusNotFound)
+			return
+		}
 		raw, err := os.ReadFile(notePath)
 		if err != nil {
 			c.Status(http.StatusNotFound)
