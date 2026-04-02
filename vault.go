@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -505,6 +506,53 @@ func (v *Vault) Create(title, body, beforeID string, public bool, tags, categori
 	return n, nil
 }
 
+func normalizedBodyForCompare(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
+}
+
+func noteUpdatePayloadEqual(existing Note, title, body string, public bool, tags, categories []string) bool {
+	if strings.TrimSpace(existing.Title) != strings.TrimSpace(title) {
+		return false
+	}
+	if normalizedBodyForCompare(existing.Body) != normalizedBodyForCompare(body) {
+		return false
+	}
+	if existing.Public != public {
+		return false
+	}
+	if !slices.Equal(normalizeStringSlice(existing.Tags), normalizeStringSlice(tags)) {
+		return false
+	}
+	if !slices.Equal(normalizeStringSlice(existing.Categories), normalizeStringSlice(categories)) {
+		return false
+	}
+	return true
+}
+
+func (v *Vault) readNoteMDInDirUnlocked(dirRel string) (Note, error) {
+	absDir := v.abs(dirRel)
+	path, ok := resolveNoteMarkdownPath(absDir)
+	if !ok {
+		return Note{}, os.ErrNotExist
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Note{}, err
+	}
+	mt := time.Now()
+	if info, err := os.Stat(path); err == nil && info != nil {
+		mt = info.ModTime()
+	}
+	parts := strings.Split(filepath.ToSlash(dirRel), "/")
+	note, err := parseNoteMD(raw, noteLayoutLeafID(parts), mt)
+	if err != nil {
+		return Note{}, err
+	}
+	note.Dir = dirRel
+	return note, nil
+}
+
 func (v *Vault) Update(id, title, body string, public bool, tags, categories []string) (Note, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -512,6 +560,10 @@ func (v *Vault) Update(id, title, body string, public bool, tags, categories []s
 	dirRel, err := v.findDirByIDUnlocked(id)
 	if err != nil {
 		return Note{}, err
+	}
+	existing, rerr := v.readNoteMDInDirUnlocked(dirRel)
+	if rerr == nil && noteUpdatePayloadEqual(existing, title, body, public, tags, categories) {
+		return existing, nil
 	}
 	t := time.Now()
 	n := Note{

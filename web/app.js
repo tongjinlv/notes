@@ -59,6 +59,8 @@
   let viewMode = "preview";
   /** 当前笔记在仓库中的相对目录，如 2026-03/n_xxx（兼容旧版 202603/n_xxx、2026/03/n_xxx、2026/03/24/n_xxx） */
   let activeNoteDir = "";
+  /** 与磁盘已一致时的编辑器快照；无改动时不 PUT（避免「新建」前误保存当前笔记导致 updated 被刷新） */
+  let persistedEditorState = null;
   let searchListTimer = null;
   /** @type {Note[]} 当前列表展示的过滤结果（与虚拟列表同步） */
   let virtualFiltered = [];
@@ -104,6 +106,55 @@
     const t = String(s);
     if (mdEditor) mdEditor.value(t);
     else els.body.value = t;
+  }
+
+  function normalizeBodyText(s) {
+    return String(s).replace(/\r\n/g, "\n");
+  }
+
+  function sigMetaList(arr) {
+    if (!arr || !arr.length) return "";
+    return JSON.stringify([...arr].map(String).sort());
+  }
+
+  function snapshotEditorFromNote(note) {
+    return {
+      title: note.title ?? "",
+      body: normalizeBodyText(note.body ?? ""),
+      public: !!note.public,
+      tags: sigMetaList(note.tags),
+      categories: sigMetaList(note.categories),
+    };
+  }
+
+  function snapshotEditorFromDOM() {
+    const tags = els.noteTags ? inputToStringList(els.noteTags.value) : [];
+    const categories = els.noteCategories ? inputToStringList(els.noteCategories.value) : [];
+    return {
+      title: els.title.value,
+      body: normalizeBodyText(getBodyText()),
+      public: els.notePublic ? !!els.notePublic.checked : false,
+      tags: sigMetaList(tags),
+      categories: sigMetaList(categories),
+    };
+  }
+
+  function isEditorDirty() {
+    if (!activeId) return false;
+    if (!persistedEditorState) return true;
+    const cur = snapshotEditorFromDOM();
+    const p = persistedEditorState;
+    return (
+      cur.title !== p.title ||
+      cur.body !== p.body ||
+      cur.public !== p.public ||
+      cur.tags !== p.tags ||
+      cur.categories !== p.categories
+    );
+  }
+
+  function syncPersistedEditorFromDOM() {
+    persistedEditorState = snapshotEditorFromDOM();
   }
 
   /** @returns {boolean} */
@@ -288,6 +339,7 @@
   function clearAppForLogout() {
     notes = [];
     activeId = null;
+    persistedEditorState = null;
     activeNoteDir = "";
     virtualRowHeightPx = 0;
     virtualFiltered = [];
@@ -1148,12 +1200,19 @@
     els.title.focus();
     renderList();
     setSavedHint("");
+    persistedEditorState = snapshotEditorFromNote(note);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        syncPersistedEditorFromDOM();
+      });
+    });
   }
 
-  /** @returns {Promise<boolean>} */
+  /** @returns {Promise<{ ok: boolean, saved: boolean }>} */
   async function flushEditorToStore() {
     const note = getActiveNote();
-    if (!note) return true;
+    if (!note) return { ok: true, saved: false };
+    if (!isEditorDirty()) return { ok: true, saved: false };
     const title = els.title.value;
     const body = getBodyText();
     const tags = els.noteTags ? inputToStringList(els.noteTags.value) : [];
@@ -1172,23 +1231,25 @@
       });
       if (!r.ok) {
         setSavedHint("保存失败");
-        return false;
+        return { ok: false, saved: false };
       }
       const updated = await r.json();
       const idx = notes.findIndex((n) => n.id === updated.id);
       if (idx >= 0) notes[idx] = updated;
       if (updated.dir) activeNoteDir = updated.dir;
+      persistedEditorState = snapshotEditorFromNote(updated);
       renderList();
-      return true;
+      return { ok: true, saved: true };
     } catch {
       setSavedHint("保存失败");
-      return false;
+      return { ok: false, saved: false };
     }
   }
 
   function flushEditorKeepalive() {
     const note = getActiveNote();
     if (!note) return;
+    if (!isEditorDirty()) return;
     const title = els.title.value;
     const body = getBodyText();
     const tags = els.noteTags ? inputToStringList(els.noteTags.value) : [];
@@ -1212,9 +1273,10 @@
     if (saveTimer) clearTimeout(saveTimer);
     setSavingHint(true);
     saveTimer = setTimeout(async () => {
-      const ok = await flushEditorToStore();
+      const r = await flushEditorToStore();
       setSavingHint(false);
-      if (ok) {
+      if (!r.ok) return;
+      if (r.saved) {
         setSavedHint("已保存");
         if (hintTimer) clearTimeout(hintTimer);
         hintTimer = setTimeout(() => setSavedHint(""), 2000);
@@ -1267,6 +1329,7 @@
     }
     notes = notes.filter((n) => n.id !== id);
     activeId = null;
+    persistedEditorState = null;
     activeNoteDir = "";
     els.title.value = "";
     setBodyText("");
