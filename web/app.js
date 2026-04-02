@@ -3,10 +3,14 @@
 
   const THEME_KEY = "local-notes-theme";
   const SIDEBAR_KEY = "local-notes-sidebar-collapsed";
+  /** localStorage：折叠的年月键 YYYY-MM 数组 */
+  const MONTH_COLLAPSED_KEY = "local-notes-sidebar-month-collapsed";
   /** 单条笔记正文参与检索的最大字符数，避免极大文件拖慢输入 */
   const SEARCH_BODY_MAX_CHARS = 24000;
   const SEARCH_LIST_DEBOUNCE_MS = 110;
   const VIRTUAL_ROW_ESTIMATE_PX = 68;
+  /** 侧栏年月分组标题行近似高度（与 CSS .note-list-group 一致） */
+  const GROUP_ROW_HEIGHT = 32;
   const VIRTUAL_OVERSCAN = 8;
 
   const mobileLayoutMq = window.matchMedia("(max-width: 720px)");
@@ -58,6 +62,15 @@
   let searchListTimer = null;
   /** @type {Note[]} 当前列表展示的过滤结果（与虚拟列表同步） */
   let virtualFiltered = [];
+  /**
+   * 分组后的侧栏行：group = 年月标题（可折叠）；note = 一条笔记。
+   * @type {{ type: 'group', key: string, label: string, count: number, collapsed: boolean } | { type: 'note', note: Note, noteIndex: number }}[]
+   */
+  let virtualListRows = [];
+  /** 已折叠的年月键 YYYY-MM（不展示该月下的笔记行） */
+  let monthCollapsed = new Set();
+  /** 行顶 y 前缀和，长度 = virtualListRows.length + 1 */
+  let listPrefix = [0];
   /** 0 表示尚未测量，用 VIRTUAL_ROW_ESTIMATE_PX */
   let virtualRowHeightPx = 0;
   let virtualListScrollRaf = 0;
@@ -344,6 +357,50 @@
     applySidebarCollapsed(localStorage.getItem(SIDEBAR_KEY) === "1");
   }
 
+  function loadMonthCollapsedState() {
+    try {
+      const raw = localStorage.getItem(MONTH_COLLAPSED_KEY);
+      if (!raw) return;
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return;
+      monthCollapsed = new Set(arr.filter((x) => typeof x === "string"));
+    } catch {
+      monthCollapsed = new Set();
+    }
+  }
+
+  function saveMonthCollapsed() {
+    try {
+      localStorage.setItem(MONTH_COLLAPSED_KEY, JSON.stringify([...monthCollapsed]));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** 当前列表与搜索不变时，仅按折叠状态重建行与前缀 */
+  function rebuildVirtualListRows() {
+    if (!virtualFiltered.length) {
+      virtualListRows = [];
+      listPrefix = [0];
+      return;
+    }
+    virtualListRows = buildGroupedListRows(virtualFiltered);
+    listPrefix = computeListPrefix(virtualListRows);
+  }
+
+  function tryToggleMonthCollapse(key) {
+    if (!key) return;
+    if (monthCollapsed.has(key)) monthCollapsed.delete(key);
+    else monthCollapsed.add(key);
+    saveMonthCollapsed();
+    rebuildVirtualListRows();
+    const listEl = els.noteList;
+    const totalH = listPrefix[listPrefix.length - 1];
+    listEl.scrollTop = Math.min(listEl.scrollTop, Math.max(0, totalH - listEl.clientHeight));
+    renderVirtualWindow();
+    applyListTabIndices();
+  }
+
   function collapseSidebar() {
     if (!els.app?.classList.contains("sidebar-collapsed") && els.sidebar?.contains(document.activeElement)) {
       els.btnSidebarExpand?.focus();
@@ -481,6 +538,106 @@
     return scored.map((x) => x.n);
   }
 
+  /**
+   * 从 note.dir 解析年月分组键：YYYY-MM。
+   * 兼容路径中任意位置的 YYYY-MM / YYYYMM / YYYY/MM/…（避免多段路径误用前两级拼成 users-gitee 等）。
+   */
+  function yearMonthKeyFromDir(dir) {
+    if (!dir || typeof dir !== "string") return "其他";
+    const parts = dir.split("/").filter(Boolean);
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      if (/^(19|20)\d{2}-\d{2}$/.test(p)) return p;
+      if (/^(19|20)\d{4}$/.test(p)) return p.slice(0, 4) + "-" + p.slice(4, 6);
+    }
+    for (let i = 0; i < parts.length - 1; i++) {
+      const a = parts[i];
+      const b = parts[i + 1];
+      if (/^(19|20)\d{2}$/.test(a) && /^\d{1,2}$/.test(b)) {
+        const mm = b.length === 1 ? "0" + b : b;
+        return a + "-" + mm.slice(-2);
+      }
+    }
+    return "其他";
+  }
+
+  function formatYearMonthLabel(key) {
+    if (/^(19|20)\d{2}-\d{2}$/.test(key)) {
+      const [y, m] = key.split("-");
+      return y + "年" + String(parseInt(m, 10)) + "月";
+    }
+    return key || "其他";
+  }
+
+  function buildGroupedListRows(notes) {
+    /** @type {{ type: 'group', key: string, label: string, count: number, collapsed: boolean } | { type: 'note', note: Note, noteIndex: number }}[] */
+    const rows = [];
+    if (!notes.length) return rows;
+    const counts = new Map();
+    for (const n of notes) {
+      const k = yearMonthKeyFromDir(n.dir);
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    let lastKey = null;
+    for (let i = 0; i < notes.length; i++) {
+      const n = notes[i];
+      const key = yearMonthKeyFromDir(n.dir);
+      if (key !== lastKey) {
+        const cnt = counts.get(key) || 0;
+        const collapsed = monthCollapsed.has(key);
+        rows.push({ type: "group", key, label: formatYearMonthLabel(key), count: cnt, collapsed });
+        lastKey = key;
+      }
+      if (!monthCollapsed.has(key)) {
+        rows.push({ type: "note", note: n, noteIndex: i });
+      }
+    }
+    return rows;
+  }
+
+  function computeListPrefix(rows) {
+    const nH = effectiveRowHeightPx();
+    const gH = GROUP_ROW_HEIGHT;
+    const prefix = [0];
+    for (let i = 0; i < rows.length; i++) {
+      const h = rows[i].type === "group" ? gH : nH;
+      prefix.push(prefix[prefix.length - 1] + h);
+    }
+    return prefix;
+  }
+
+  /** 首个满足 prefix[i+1] > y 的行下标 i */
+  function findFirstRowBelowY(prefix, y, n) {
+    let lo = 0;
+    let hi = n;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (prefix[mid + 1] <= y) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  /** 首个满足 prefix[i] >= y 的行下标 i（0..nRows，用于切片上沿 exclusive end） */
+  function findFirstRowStartGe(prefix, y, nRows) {
+    let lo = 0;
+    let hi = nRows + 1;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (prefix[mid] < y) lo = mid + 1;
+      else hi = mid;
+    }
+    return Math.min(lo, nRows);
+  }
+
+  function noteIndexToRowIndex(noteIdx) {
+    for (let r = 0; r < virtualListRows.length; r++) {
+      const row = virtualListRows[r];
+      if (row.type === "note" && row.noteIndex === noteIdx) return r;
+    }
+    return -1;
+  }
+
   function effectiveRowHeightPx() {
     return virtualRowHeightPx > 0 ? virtualRowHeightPx : VIRTUAL_ROW_ESTIMATE_PX;
   }
@@ -499,14 +656,48 @@
   }
 
   function clampScrollToShowIndex(idx) {
+    const n = virtualFiltered[idx];
+    if (n) {
+      const key = yearMonthKeyFromDir(n.dir);
+      if (monthCollapsed.has(key)) {
+        monthCollapsed.delete(key);
+        saveMonthCollapsed();
+        rebuildVirtualListRows();
+      }
+    }
     const listEl = els.noteList;
+    const r = noteIndexToRowIndex(idx);
+    if (r < 0) return;
     const rh = effectiveRowHeightPx();
     const viewH = listEl.clientHeight;
-    const top = idx * rh;
+    const top = listPrefix[r];
     let st = listEl.scrollTop;
     if (top < st) st = top;
     else if (top + rh > st + viewH) st = top + rh - viewH;
     listEl.scrollTop = st;
+  }
+
+  function createGroupLi(row) {
+    const li = document.createElement("li");
+    li.className = "note-list-group";
+    li.setAttribute("role", "presentation");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "note-list-group-btn";
+    btn.setAttribute("data-month-key", row.key);
+    btn.setAttribute("aria-expanded", row.collapsed ? "false" : "true");
+    const chev = document.createElement("span");
+    chev.className = "note-list-group-chevron" + (row.collapsed ? " is-collapsed" : "");
+    chev.setAttribute("aria-hidden", "true");
+    const lab = document.createElement("span");
+    lab.className = "note-list-group-label";
+    lab.textContent = row.label;
+    const cnt = document.createElement("span");
+    cnt.className = "note-list-group-count";
+    cnt.textContent = " · " + row.count;
+    btn.append(chev, lab, cnt);
+    li.append(btn);
+    return li;
   }
 
   function createNoteItemLi(note) {
@@ -553,28 +744,35 @@
 
   function renderVirtualWindow() {
     const listEl = els.noteList;
-    const n = virtualFiltered.length;
-    if (n === 0) {
+    const nRows = virtualListRows.length;
+    if (virtualFiltered.length === 0 || nRows === 0) {
       listEl.innerHTML = "";
       return;
     }
 
     const rh = effectiveRowHeightPx();
+    const maxH = Math.max(rh, GROUP_ROW_HEIGHT);
+    const padPx = VIRTUAL_OVERSCAN * maxH;
     const st = listEl.scrollTop;
     const viewH = Math.max(listEl.clientHeight, 1);
+    const totalH = listPrefix[listPrefix.length - 1];
+
     let start = 0;
-    let end = n;
+    let end = nRows;
     if (viewH > 1) {
-      start = Math.floor(st / rh) - VIRTUAL_OVERSCAN;
-      end = Math.ceil((st + viewH) / rh) + VIRTUAL_OVERSCAN;
+      const y0 = Math.max(0, st - padPx);
+      const y1 = st + viewH + padPx;
+      start = findFirstRowBelowY(listPrefix, y0, nRows);
+      end = findFirstRowStartGe(listPrefix, y1, nRows);
       start = Math.max(0, start);
-      end = Math.min(n, end);
+      end = Math.min(nRows, end);
+      if (end < start) end = start;
     } else {
-      end = Math.min(n, 48);
+      end = Math.min(nRows, 48);
     }
 
-    const topPad = start * rh;
-    const bottomPad = (n - end) * rh;
+    const topPad = listPrefix[start];
+    const bottomPad = Math.max(0, totalH - listPrefix[end]);
 
     const frag = document.createDocumentFragment();
     const padTop = document.createElement("li");
@@ -584,12 +782,14 @@
     frag.append(padTop);
 
     for (let i = start; i < end; i++) {
-      frag.append(createNoteItemLi(virtualFiltered[i]));
+      const row = virtualListRows[i];
+      if (row.type === "group") frag.append(createGroupLi(row));
+      else frag.append(createNoteItemLi(row.note));
     }
 
     const padBot = document.createElement("li");
     padBot.className = "note-list-pad note-list-pad-bottom";
-    padBot.style.height = Math.max(0, bottomPad) + "px";
+    padBot.style.height = bottomPad + "px";
     padBot.setAttribute("aria-hidden", "true");
     frag.append(padBot);
 
@@ -606,13 +806,20 @@
     if (firstItem && virtualRowHeightPx === 0) {
       const measured = measureNoteItemRowHeight(firstItem);
       if (measured > 0 && Math.abs(measured - rh) >= 1) {
+        const oldTotal = listPrefix[listPrefix.length - 1];
         virtualRowHeightPx = measured;
-        const maxScroll = Math.max(0, n * measured - listEl.clientHeight);
-        listEl.scrollTop = Math.min(Math.round((st / rh) * measured), maxScroll);
+        listPrefix = computeListPrefix(virtualListRows);
+        const newTotal = listPrefix[listPrefix.length - 1];
+        const maxScroll = Math.max(0, newTotal - listEl.clientHeight);
+        listEl.scrollTop = Math.min(
+          Math.round(oldTotal > 0 ? (st / oldTotal) * newTotal : 0),
+          maxScroll
+        );
         renderVirtualWindow();
         return;
       }
       virtualRowHeightPx = measured || VIRTUAL_ROW_ESTIMATE_PX;
+      listPrefix = computeListPrefix(virtualListRows);
     }
 
     if (focusId) {
@@ -656,6 +863,8 @@
     if (virtualFiltered.length === 0) {
       listEl.innerHTML = "";
       listEl.scrollTop = 0;
+      virtualListRows = [];
+      listPrefix = [0];
       virtualRowHeightPx = 0;
       applyListTabIndices();
       if (notes.length === 0) els.noteCount.textContent = noteCountWhenNoNotes();
@@ -668,8 +877,12 @@
       return;
     }
 
+    virtualListRows = buildGroupedListRows(virtualFiltered);
+    listPrefix = computeListPrefix(virtualListRows);
+
     const rh = effectiveRowHeightPx();
-    const maxScroll = Math.max(0, virtualFiltered.length * rh - listEl.clientHeight);
+    const totalH = listPrefix[listPrefix.length - 1];
+    const maxScroll = Math.max(0, totalH - listEl.clientHeight);
     listEl.scrollTop = Math.min(prevScrollTop, maxScroll);
 
     if (wasListBtn && prevListId) {
@@ -1137,6 +1350,13 @@
   }
 
   els.noteList.addEventListener("click", async (e) => {
+    const gbtn = e.target.closest(".note-list-group-btn");
+    const monthKey = gbtn && (gbtn.getAttribute("data-month-key") || gbtn.dataset.monthKey);
+    if (monthKey) {
+      e.preventDefault();
+      tryToggleMonthCollapse(monthKey);
+      return;
+    }
     const btn = e.target.closest(".note-item-btn");
     if (!btn || !btn.dataset.id) return;
     if (btn.dataset.id === activeId) return;
@@ -1272,6 +1492,7 @@
 
   loadTheme();
   loadSidebarState();
+  loadMonthCollapsedState();
 
   async function boot() {
     await refreshAuth();
