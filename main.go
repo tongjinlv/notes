@@ -38,7 +38,8 @@ func newNoteID() string {
 	return "n_" + hex.EncodeToString(b)
 }
 
-const maxImageUpload = 32 << 20
+// maxUploadSize 为上传至笔记目录的媒体与附件统一上限（单文件）。
+const maxUploadSize = 10 << 20
 
 // HTTP 缓存：图片/字体等可长期不变；HTML/API 仍由各自路由决定不长期缓存。
 const (
@@ -212,22 +213,31 @@ func registerVaultAPI(g *gin.RouterGroup) {
 		}
 		defer src.Close()
 
-		limited := io.LimitReader(src, maxImageUpload+1)
+		limited := io.LimitReader(src, maxUploadSize+1)
 		data, err := io.ReadAll(limited)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		if len(data) > maxImageUpload {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "图片过大"})
+		if len(data) > maxUploadSize {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件过大（最大 10MB）"})
 			return
 		}
 		ext, _, ok := detectImageType(data)
-		if !ok || ext == "" {
-			c.JSON(http.StatusUnsupportedMediaType, gin.H{"error": "不支持的图片格式（支持 png、jpeg、gif、webp、bmp、svg、heic、avif）"})
+		if ok && ext != "" {
+			name, err := v.SaveImage(noteID, data, ext)
+			if err != nil {
+				if os.IsNotExist(err) {
+					c.JSON(http.StatusNotFound, gin.H{"error": "笔记不存在"})
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusCreated, gin.H{"name": name, "kind": "image"})
 			return
 		}
-		name, err := v.SaveImage(noteID, data, ext)
+		name, err := v.SaveAttachment(noteID, data, fh.Filename)
 		if err != nil {
 			if os.IsNotExist(err) {
 				c.JSON(http.StatusNotFound, gin.H{"error": "笔记不存在"})
@@ -236,7 +246,7 @@ func registerVaultAPI(g *gin.RouterGroup) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusCreated, gin.H{"name": name})
+		c.JSON(http.StatusCreated, gin.H{"name": name, "kind": "file"})
 	})
 
 	g.GET("/vault/*filepath", func(c *gin.Context) {
@@ -314,7 +324,7 @@ func checkListenAddr(addr string) error {
 func buildRouter(vaultBase string, webRoot fs.FS, auth *authBundle) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.MaxMultipartMemory = maxImageUpload
+	r.MaxMultipartMemory = maxUploadSize
 	r.RedirectTrailingSlash = false
 	r.RedirectFixedPath = false
 	r.HandleMethodNotAllowed = false

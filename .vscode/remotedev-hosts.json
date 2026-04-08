@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "activeHostId": "4758dfba93606809",
+  "hosts": [
+    {
+      "id": "4758dfba93606809",
+      "name": "tom",
+      "ssh": {
+        "host": "10.0.0.1",
+        "port": 22,
+        "username": "tom",
+        "privateKeyPath": "c:\\Users\\jinlv.tong\\.ssh\\id_rsa",
+        "passphrase": ""
+      },
+      "remoteBasePath": "/home/tom/work/notes/",
+      "runCommand": "go run .",
+      "localCommand": "build.bat run",
+      "localCommand1": "build.bat  build"
+    },
+    {
+      "id": "15432d93aa19df3e",
+      "name": "tom",
+      "ssh": {
+        "host": "10.0.0.4",
+        "port": 22,
+        "username": "tom",
+        "privateKeyPath": "c:\\Users\\jinlv.tong\\.ssh\\id_rsa",
+        "passphrase": ""
+      },
+      "remoteBasePath": "/home/work/notes",
+      "runCommand": "./run.sh",
+      "localCommand": "",
+      "localCommand1": ""
+    },
+    {
+      "id": "15432d93aa19df3e",
+      "name": "tom",
+      "ssh": {
+        "host": "10.0.0.4",
+        "port": 22,
+        "username": "tom",
+        "privateKeyPath": "c:\\Users\\jinlv.tong\\.ssh\\id_rsa",
+        "passphrase": ""
+      },
+      "remoteBasePath": "/home/work/notes",
+      "runCommand": "./run.sh",
+      "localCommand": "",
+      "localCommand1": ""
+    }
+  ]
+}

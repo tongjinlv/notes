@@ -88,7 +88,7 @@
   /** EasyMDE 实例；未加载或降级时为 null */
   let mdEditor = null;
 
-  function triggerNoteImageUpload() {
+  function triggerNoteMediaUpload() {
     if (!getActiveNote()) {
       setSavedHint("请先打开一条笔记");
       setTimeout(() => setSavedHint(""), 2000);
@@ -167,7 +167,7 @@
       status: false,
       autofocus: false,
       placeholder:
-        "在此编写 Markdown…\n\n可粘贴截图（Ctrl+V）、拖入图片，或点工具栏「上传」从相册/相机添加。",
+        "在此编写 Markdown…\n\n可粘贴截图/文件（Ctrl+V）、拖入文件，或点工具栏「上传」添加图片与附件（单文件 ≤10MB）。",
       minHeight: "260px",
       autoDownloadFontAwesome: true,
       renderingConfig: {
@@ -193,10 +193,10 @@
         {
           name: "upload-image",
           action: function () {
-            triggerNoteImageUpload();
+            triggerNoteMediaUpload();
           },
           className: "fa fa-cloud-upload",
-          title: "上传图片到笔记（相册/相机）",
+          title: "上传图片或附件（任意格式，单文件 ≤10MB）",
         },
         "|",
         "table",
@@ -1002,7 +1002,16 @@
     const u = String(url).trim();
     if (/^javascript:/i.test(u) || /^data:/i.test(u)) return null;
     if (/^https?:\/\//i.test(u)) return u;
+    if (u.startsWith("/api/vault/") || u.startsWith("/api/media/")) return u;
     if (u.startsWith("/") && !u.startsWith("//")) return u;
+    if (activeNoteDir && !u.includes("://") && !u.startsWith("//")) {
+      const rel = u.replace(/^\.\//, "");
+      if (rel.startsWith("/") || rel.includes("..")) return null;
+      const segs = activeNoteDir.split("/").filter(Boolean).map(encodeURIComponent);
+      const fileSegs = rel.split("/").filter(Boolean).map(encodeURIComponent);
+      if (!fileSegs.length) return null;
+      return "/api/vault/" + segs.join("/") + "/" + fileSegs.join("/");
+    }
     return null;
   }
 
@@ -1139,11 +1148,13 @@
     ta.focus();
   }
 
-  async function uploadImageFile(file) {
+  const maxUploadBytes = 10 << 20;
+
+  async function uploadMediaFile(file) {
     if (!activeId) throw new Error("无活动笔记");
     const fd = new FormData();
     fd.append("note", activeId);
-    fd.append("file", file, file.name || "image.png");
+    fd.append("file", file, file.name || "file.bin");
     const r = await apiFetch("/api/media", { method: "POST", body: fd });
     if (!r.ok) {
       let msg = r.statusText;
@@ -1157,25 +1168,54 @@
     }
     const j = await r.json();
     if (!j.name) throw new Error("响应无效");
-    return j.name;
+    const kind = j.kind === "file" ? "file" : "image";
+    return { name: j.name, kind };
   }
 
-  async function insertImagesFromFiles(files) {
+  /** 从剪贴板收集文件：优先 clipboardData.files（资源管理器复制文件后粘贴常见），否则回退到 items（截图等） */
+  function collectFilesFromClipboard(dataTransfer) {
+    if (!dataTransfer) return [];
+    const out = [];
+    const files = dataTransfer.files;
+    if (files && files.length > 0) {
+      for (let i = 0; i < files.length; i++) {
+        out.push(files[i]);
+      }
+      return out;
+    }
+    const items = dataTransfer.items;
+    if (!items || !items.length) return out;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind !== "file") continue;
+      const f = item.getAsFile();
+      if (f) out.push(f);
+    }
+    return out;
+  }
+
+  async function insertMediaFromFiles(files) {
     if (!getActiveNote() || !files.length) return;
     for (const file of files) {
-      const isImage =
-        (file.type && file.type.startsWith("image/")) ||
-        /\.(png|jpe?g|gif|webp|svg|heic|heif|bmp)$/i.test(file.name || "");
-      if (!isImage) continue;
+      if (file.size > maxUploadBytes) {
+        setSavedHint("文件过大（单文件最大 10MB）");
+        setTimeout(() => setSavedHint(""), 3500);
+        return;
+      }
       try {
-        setSavedHint("上传图片…");
-        const url = await uploadImageFile(file);
+        setSavedHint("上传中…");
+        const { name, kind } = await uploadMediaFile(file);
         if (viewMode === "preview") setViewMode("edit");
-        insertIntoEditor("\n\n![](" + url + ")\n\n");
+        if (kind === "file") {
+          const label = String(file.name || name).replace(/[[\]]/g, "");
+          insertIntoEditor("\n\n[" + label + "](" + name + ")\n\n");
+        } else {
+          insertIntoEditor("\n\n![](" + name + ")\n\n");
+        }
         scheduleSave();
       } catch (e) {
         const msg = e && e.message ? String(e.message) : "";
-        setSavedHint(msg ? "上传失败：" + msg.slice(0, 120) : "图片上传失败");
+        setSavedHint(msg ? "上传失败：" + msg.slice(0, 120) : "上传失败");
         return;
       }
     }
@@ -1353,7 +1393,7 @@
   els.noteImageFile?.addEventListener("change", async () => {
     const files = Array.from(els.noteImageFile.files || []);
     els.noteImageFile.value = "";
-    await insertImagesFromFiles(files);
+    await insertMediaFromFiles(files);
   });
 
   els.sidebarBackdrop?.addEventListener("click", () => collapseSidebar());
@@ -1369,29 +1409,19 @@
 
   const main = els.editorMain;
   if (main) {
-    main.addEventListener("paste", async (e) => {
-      const items = e.clipboardData?.items;
-      if (!items || !getActiveNote()) return;
-      for (const item of items) {
-        if (item.kind === "file" && item.type.startsWith("image/")) {
-          e.preventDefault();
-          const file = item.getAsFile();
-          if (!file) continue;
-          try {
-            setSavedHint("上传图片…");
-            const url = await uploadImageFile(file);
-            if (viewMode === "preview") setViewMode("edit");
-            insertIntoEditor("\n\n![](" + url + ")\n\n");
-            scheduleSave();
-            setSavedHint("");
-          } catch (e) {
-            const msg = e && e.message ? String(e.message) : "";
-            setSavedHint(msg ? "上传失败：" + msg.slice(0, 120) : "图片上传失败");
-          }
-          break;
-        }
-      }
-    });
+    // 捕获阶段先于 CodeMirror 处理，才能拦截「粘贴文件」；仅在有文件时 preventDefault，纯文字粘贴不受影响
+    main.addEventListener(
+      "paste",
+      async (e) => {
+        if (!getActiveNote()) return;
+        const files = collectFilesFromClipboard(e.clipboardData);
+        if (!files.length) return;
+        e.preventDefault();
+        e.stopPropagation();
+        await insertMediaFromFiles(files);
+      },
+      true
+    );
     main.addEventListener("dragover", (e) => {
       if (!getActiveNote()) return;
       e.preventDefault();
@@ -1407,8 +1437,8 @@
       if (!getActiveNote()) return;
       e.preventDefault();
       main.classList.remove("drop-target");
-      const files = Array.from(e.dataTransfer?.files || []).filter((f) => f.type.startsWith("image/"));
-      await insertImagesFromFiles(files);
+      const files = Array.from(e.dataTransfer?.files || []);
+      await insertMediaFromFiles(files);
     });
   }
 

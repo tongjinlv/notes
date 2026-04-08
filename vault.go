@@ -662,6 +662,86 @@ func (v *Vault) SaveImage(noteID string, data []byte, ext string) (fileName stri
 	return fileName, nil
 }
 
+func sanitizeAttachmentBase(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	s = filepath.Base(s)
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-', r == '_', r == '.', r >= 0x0080: // 含中文等
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	out := strings.Trim(b.String(), "._")
+	if out == "" {
+		return ""
+	}
+	if ext := filepath.Ext(out); ext != "" {
+		base := strings.TrimSuffix(out, ext)
+		if len(base) > 120 {
+			base = base[:120]
+		}
+		return base
+	}
+	if len(out) > 120 {
+		return out[:120]
+	}
+	return out
+}
+
+func sanitizeAttachmentExt(ext string) string {
+	ext = strings.ToLower(strings.TrimSpace(ext))
+	if ext == "" || ext[0] != '.' || len(ext) > 32 {
+		return ""
+	}
+	for _, r := range ext[1:] {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			continue
+		}
+		return ""
+	}
+	return ext
+}
+
+// SaveAttachment 将任意二进制写入当前笔记目录，文件名由建议名与随机后缀组成。
+func (v *Vault) SaveAttachment(noteID string, data []byte, suggestedName string) (fileName string, err error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	dirRel, err := v.findDirByIDUnlocked(noteID)
+	if err != nil {
+		return "", err
+	}
+	base := filepath.Base(strings.TrimSpace(suggestedName))
+	if base == "" || base == "." {
+		base = "file"
+	}
+	ext := filepath.Ext(base)
+	nameOnly := strings.TrimSuffix(base, ext)
+	safeBase := sanitizeAttachmentBase(nameOnly)
+	if safeBase == "" {
+		safeBase = "file"
+	}
+	safeExt := sanitizeAttachmentExt(ext)
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	fileName = fmt.Sprintf("%s-%s%s", safeBase, hex.EncodeToString(b), safeExt)
+	full := filepath.Join(v.abs(dirRel), fileName)
+	if err := os.WriteFile(full, data, 0o644); err != nil {
+		return "", err
+	}
+	return fileName, nil
+}
+
 func (v *Vault) Root() string {
 	return v.root
 }
