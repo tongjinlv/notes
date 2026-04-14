@@ -26,7 +26,7 @@
 ## 快速开始
 
 ```bash
-git clone https://github.com/你的ID/你的仓库.git
+git clone https://github.com/jmpty/notempty.git
 cd 你的仓库
 go run .
 ```
